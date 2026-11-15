@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="static/favicon.png">
+  <title>Amiga Boing Balls</title>
+  <style>
+    /* The Amiga's own Topaz-style font, and the classic mouse pointer. */
+    @font-face { font-family: Amiga; src: url(static/amiga.woff2) format("woff2"); }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #aaaaaa;
+      font: 10px Amiga, monospace;
+      color: #000000;   /* Workbench 2.0 drew its text in black */
+      cursor: url(static/cursor.png), auto;
+    }
+    * { cursor: inherit; }
+
+    /* The 3D scene fills the whole window. touch-action: none stops the
+       browser from scrolling or zooming the page when you drag on it. */
+    #scene { display: block; width: 100%; height: 100%; touch-action: none; }
+
+    #info { position: absolute; z-index: 1; bottom: 10px; width: 100%; text-align: center; line-height: 1.6;
+            pointer-events: none; }
+    #info a { color: inherit; pointer-events: auto; }
+    /* Over the dark copper-bar backdrop, black text would be unreadable. */
+    body.copper #info { color: #ffffff; }
+
+    /* ---- Settings panel, styled as an AmigaOS 2.0 Workbench window ----
+       Workbench 2.0 used four colours: grey #aaaaaa, black, white and light
+       blue #6688bb. Buttons look raised (white edges top/left, black edges
+       bottom/right); sliders and number boxes look sunken (the reverse).
+       Amiga pixels were twice as tall as wide, so side edges are 2px. */
+    .raised { border: solid; border-width: 1px 2px; border-color: #ffffff #000000 #000000 #ffffff; }
+    .sunken { border: solid; border-width: 1px 2px; border-color: #000000 #ffffff #ffffff #000000; }
+
+    .panel { position: absolute; top: 0; right: 15px; width: 245px; color: #000000; user-select: none; z-index: 5; }
+    .panel-window { background: #aaaaaa; }
+    .panel.closed .panel-window { display: none; }
+    .panel-title { height: 16px; line-height: 16px; padding: 0 6px; background: #6688bb;
+                   border-bottom: 1px solid #000000; }
+    /* With many rows the panel can be taller than a small window: then the
+       rows scroll, and the title and Close button stay in place. */
+    .panel-rows { padding: 4px 0; max-height: calc(100vh - 60px); overflow-y: auto; scrollbar-width: thin; }
+    .panel-row { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px; }
+    .panel-label { width: 40%; white-space: nowrap; }
+
+    /* Slider: a sunken track with a raised knob that slides along it. */
+    .slider { flex: 1; height: 15px; position: relative; touch-action: none; }
+    .slider-knob { position: absolute; top: 0; bottom: 0; width: 22%; background: #aaaaaa; }
+    .slider-fill { height: 100%; background: #6688bb; }   /* read-only gauge (FPS) */
+    .slider-number { width: 40px; height: 15px; line-height: 15px; padding: 0 3px; text-align: right; }
+    .readout { flex: 1; height: 15px; line-height: 15px; padding: 0 3px; text-align: right; }
+
+    /* Buttons: raised, and pressed in while held down. */
+    .panel button { display: block; width: 100%; height: 18px; padding: 0; background: #aaaaaa;
+                    color: #000000; font: inherit; }
+    .panel button:active { border-color: #000000 #ffffff #ffffff #000000; }
+    .panel-close { padding: 4px 6px 6px; }
+
+    /* Tabs: a row of buttons; the chosen page's button stays pressed in. */
+    .panel-tabs { gap: 2px; }
+    .panel-tabs button.chosen { border-color: #000000 #ffffff #ffffff #000000; background: #6688bb; }
+
+    /* Cycle gadget: a button with a "next" mark on the left, set off by a
+       groove, and the current choice in the middle. */
+    .panel button.cycle { flex: 1; width: auto; height: 17px; display: flex; align-items: center; }
+    .cycle-mark { width: 16px; line-height: 13px; font: bold 12px sans-serif; text-align: center;
+                  border-right: 1px solid #000000; box-shadow: 1px 0 0 #ffffff; }
+    .cycle-text { flex: 1; text-align: center; white-space: nowrap; overflow: hidden; }
+
+    /* Window: can be dragged by its title bar; close gadget top-left. */
+    .window { position: absolute; background: #aaaaaa; color: #000000; user-select: none; }
+    .window-bar { display: flex; align-items: center; gap: 6px; padding: 0 6px 0 0; touch-action: none; }
+    .window-close { width: 18px; height: 16px; padding: 0; background: #aaaaaa; position: relative; }
+    .window-close::after { content: ""; position: absolute; left: 5px; top: 5px; width: 4px; height: 4px;
+                           background: #ffffff; border: 1px solid #000000; }
+    .window-close:active { border-color: #000000 #ffffff #ffffff #000000; }
+    .twist-canvas { display: block; margin: 4px 4px 14px; }
+    /* Sizing gadget: bottom-right corner, with the Amiga's little two-box mark. */
+    .window-size { position: absolute; right: 0; bottom: 0; width: 14px; height: 12px; touch-action: none;
+                   border: solid; border-width: 1px 2px; border-color: #ffffff #000000 #000000 #ffffff;
+                   background: linear-gradient(135deg, #aaaaaa 50%, #000000 50%, #000000 58%, #ffffff 58%); }
+
+    /* Requester: the content of a window with text and an OK button. */
+    .requester { width: min(560px, 100vw - 24px); display: flex; flex-direction: column; }
+    .requester-body { margin: 6px; padding: 2px 8px; max-height: calc(100vh - 90px); overflow-y: auto;
+                      line-height: 1.5; user-select: text;
+                      border: solid; border-width: 1px 2px; border-color: #000000 #ffffff #ffffff #000000; }
+    .requester-body p { margin: 6px 0; }
+    .requester-heading { color: #ffffff; }
+    .requester-buttons { padding: 0 6px 6px; display: flex; justify-content: center; }
+    .requester button { width: 80px; height: 18px; padding: 0; background: #aaaaaa; color: #000000; font: inherit; }
+    .requester button:active { border-color: #000000 #ffffff #ffffff #000000; }
+
+    /* Checkbox: a raised box that shows a tick when on. */
+    .panel .checkbox { width: 26px; height: 15px; line-height: 13px; text-align: center;
+                       font: bold 12px sans-serif; }   /* the Amiga font has no tick */
+
+    /* On touch screens (phones, tablets) fingers need bigger targets, so the
+       panel is drawn larger, growing from the top-right corner: 1.8 times on
+       tablets, and as large as fits on a narrow phone screen (the panel is
+       245 px wide, so 1.4 times fits a 360 px phone). */
+    @media (pointer: coarse) {
+      .panel { transform: scale(1.8); transform-origin: top right; }
+      .panel-rows { max-height: calc((100vh - 110px) / 1.8); }
+    }
+    @media (pointer: coarse) and (max-width: 480px) {
+      .panel { transform: scale(1.4); right: 8px; }
+      .panel-rows { max-height: calc((100vh - 85px) / 1.4); }
+    }
+
+    /* The sine scroller: a strip across the bottom, above the credit line.
+       Clicks pass straight through it to the scene. */
+    .scroller { position: absolute; left: 0; bottom: 30px; width: 100%; height: 130px; pointer-events: none; }
+    /* (scroller.js makes it less tall on narrow screens.) */
+  </style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="info">Amiga Boing Balls Release 2.04 by <a href="mailto:john [dot] mattsson@gmail.com">John Preuss Mattsson</a></div>
+
+  <!-- Load the scripts.
+
+       Browsers keep copies of files they have downloaded (a "cache"). After
+       you publish a new version, some visitors could get a mix of old and new
+       scripts for a while. Adding "?v=<version>" to every script address
+       makes them look like new files, so everyone gets the new set at once.
+       So: CHANGE VERSION WHENEVER YOU PUBLISH CHANGES. (Only the build
+       number after the dash: the release shown on the page stays 2.04.)
+
+       The "import map" makes the scripts' imports of each other (such as
+       import './physics.js') use the same versioned addresses.
+
+       Note: scripts that import each other ("modules") don't load from
+       file://, so open the page through a web server (see README). -->
+  <script>
+    const VERSION = '2.04-26';
+    const scripts = ['main', 'physics', 'renderer', 'shaders', 'camera', 'math', 'audio', 'gui', 'twist', 'music', 'scroller', 'presets'];
+
+    const imports = {};
+    for (const name of scripts) imports[`./js/${name}.js`] = `./js/${name}.js?v=${VERSION}`;
+    const importMap = document.createElement('script');
+    importMap.type = 'importmap';
+    importMap.textContent = JSON.stringify({ imports });
+    document.currentScript.after(importMap);
+
+    const main = document.createElement('script');
+    main.type = 'module';
+    main.src = `js/main.js?v=${VERSION}`;
+    importMap.after(main);
+  </script>
+</body>
+</html>
