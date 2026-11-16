@@ -60,29 +60,38 @@
 // shows exactly the same shade. Only the in-between edge pixels change.
 // =============================================================================
 
-// The most balls the shaders can handle. Arrays in shaders need a fixed size.
-export const MAX_BALLS = 128;
+// The most balls the program can handle.
+export const MAX_BALLS = 1000;
 
 // The shadow grid (see "Shadows" below and fillShadowGrid in renderer.js).
-export const SHADOW_GRID = 64;     // cells across and down
-export const SHADOW_SLOTS = 32;    // most balls one cell can list
+export const SHADOW_GRID = 192;        // cells across and down (finer = fewer balls to check per pixel)
+export const SHADOW_LIST_WIDTH = 2048; // the lists of all cells, this many numbers per texture row
 
-// The list of balls, needed by several shaders. It lives in a "uniform
-// buffer": one block of memory that renderer.js fills once per frame and all
-// shader programs share. (Plain uniform arrays only have guaranteed room for
-// about 40 balls; a uniform buffer has room for at least 200.)
-//
-// The block's layout follows the "std140" rules, under which every entry of
-// these arrays takes 16 bytes (a vec4), and a mat3 takes three of them.
-// renderer.js packs the numbers in exactly this order.
+// The list of balls, needed by several shaders. It is kept in a small
+// texture that renderer.js fills once per frame and all shader programs
+// share: not a picture, just a table of numbers, one row per ball and four
+// numbers in each of its six columns:
+//   column 0: the centre (x, y, z) and the radius
+//   column 1: the colour (r, g, b) and the number of checker squares
+//             from pole to pole
+//   columns 2-4: how the ball is turned (a 3 × 3 rotation, one column each)
+//   column 5: the drawing order: in row k, the number of the ball to draw
+//             k-th (farthest first)
+// (A table in a texture can hold thousands of balls. The plainer ways of
+// handing a list to a shader, uniform arrays and uniform blocks, are only
+// sure to have room for about 40 and 200 balls.)
 const BALL_LIST = /* glsl */ `
-  const int MAX_BALLS = ${MAX_BALLS};
-  layout(std140) uniform Balls {
-    vec4 uBalls[MAX_BALLS];          // xyz = centre of each ball, w = radius
-    vec4 uBallColor[MAX_BALLS];      // rgb = colour, a = checker squares from pole to pole
-    mat3 uBallRotation[MAX_BALLS];   // how each ball is turned
-  };
+  uniform highp sampler2D uBallData;
   uniform int uBallCount;            // how many balls there are
+
+  vec4 ballSphere(int i) { return texelFetch(uBallData, ivec2(0, i), 0); }   // centre, radius
+  vec4 ballColor(int i)  { return texelFetch(uBallData, ivec2(1, i), 0); }   // colour, squares
+  mat3 ballRotation(int i) {
+    return mat3(texelFetch(uBallData, ivec2(2, i), 0).xyz,
+                texelFetch(uBallData, ivec2(3, i), 0).xyz,
+                texelFetch(uBallData, ivec2(4, i), 0).xyz);
+  }
+  int ballDrawnAs(int k) { return int(texelFetch(uBallData, ivec2(5, k), 0).x); }
 `;
 
 // Code shared by every fragment (pixel) shader that draws the scene.
@@ -92,7 +101,8 @@ const PIXEL_TOOLS = /* glsl */ `
   uniform vec3  uLightForward;      // the direction the lamp looks in (towards the scene),
   uniform vec3  uLightSide;         //   and two directions at right angles to it: these
   uniform vec3  uLightUp;           //   are "sideways" and "up" in the lamp's view
-  uniform highp usampler2D uShadowGrid;   // which balls can shadow where (see below)
+  uniform highp usampler2D uShadowCells;  // the shadow grid: for each cell, where its list starts and how long it is
+  uniform highp usampler2D uShadowList;   //   and all the lists, one after another (see below)
   uniform float uShadowRange;       // how much of the lamp's view the grid covers
   uniform float uShadowStrength;    // 0.4 = shadows are 40 % darker
   uniform float uEdgeWidth;         // how many pixels an edge is blended over
@@ -173,10 +183,10 @@ const PIXEL_TOOLS = /* glsl */ `
   // itself — the balls are drawn without lighting, so their "night side"
   // would otherwise turn dark too, which is not the classic look.
   //
-  // THE SHADOW GRID. This runs for every pixel, so with 100 balls checking
+  // THE SHADOW GRID. This runs for every pixel, so with 500 balls checking
   // every ball would be slow. Instead, picture standing at the lamp and
   // looking down: each ball covers a small patch of that view. Once per
-  // frame, renderer.js divides the view into a grid of 64 × 64 cells and
+  // frame, renderer.js divides the view into a grid of 192 × 192 cells and
   // lists, for every cell, the few balls that cover part of it. Here we find
   // which cell this point is in (seen from the lamp) and only check the
   // balls listed there.
@@ -201,18 +211,19 @@ const PIXEL_TOOLS = /* glsl */ `
     float ahead = -dot(toLight, uLightForward);
     if (ahead <= 0.0) return 0.0;   // behind the lamp
     vec2  seen = -vec2(dot(toLight, uLightSide), dot(toLight, uLightUp)) / ahead;
-    ivec2 cell = ivec2(floor((seen / (2.0 * uShadowRange) + 0.5) * ${SHADOW_GRID}.0));
-    if (any(lessThan(cell, ivec2(0))) || any(greaterThanEqual(cell, ivec2(${SHADOW_GRID})))) return 0.0;
+    // (Outside the grid: the outermost cell, where balls beyond the edge are listed too.)
+    ivec2 cell = clamp(ivec2(floor((seen / (2.0 * uShadowRange) + 0.5) * ${SHADOW_GRID}.0)), ivec2(0), ivec2(${SHADOW_GRID} - 1));
 
     float shadow = 0.0;
-    for (int slot = 0; slot < ${SHADOW_SLOTS}; slot++) {
-      uint listed = texelFetch(uShadowGrid, ivec2(cell.x * ${SHADOW_SLOTS} + slot, cell.y), 0).r;
-      if (listed == 255u) break;     // end of this cell's list
-      int i = int(listed);
+    uint packed = texelFetch(uShadowCells, cell, 0).r;
+    uvec2 list = uvec2(packed >> 12u, packed & 4095u);   // first entry, how many
+    for (uint k = 0u; k < list.y; k++) {
+      uint entry = list.x + k;
+      int i = int(texelFetch(uShadowList, ivec2(int(entry % ${SHADOW_LIST_WIDTH}u), int(entry / ${SHADOW_LIST_WIDTH}u)), 0).r);
       if (i == skipBall) continue;   // never our own ball
 
-      vec3  toBall = uBalls[i].xyz - p;
-      float radius = uBalls[i].w;
+      vec3  toBall = ballSphere(i).xyz - p;
+      float radius = ballSphere(i).w;
 
       // How far along the line towards the lamp we get closest to the
       // ball's centre. Balls behind us, or beyond the lamp, are not in the way.
@@ -431,7 +442,7 @@ export const WALL_FRAGMENT_SHADER = /* glsl */ `#version 300 es
 //
 // One square per ball, all drawn in a single call ("instancing"):
 // gl_InstanceID says which copy is being drawn. renderer.js sorts the balls
-// from far to near (uDrawOrder), so the smooth outline of a near ball blends
+// from far to near (column 5 of the ball table), so the smooth outline of a near ball blends
 // over a ball behind it.
 // -----------------------------------------------------------------------------
 export const BALL_VERTEX_SHADER = /* glsl */ `#version 300 es
@@ -443,16 +454,15 @@ export const BALL_VERTEX_SHADER = /* glsl */ `#version 300 es
 
   uniform mat4 uViewProjection;            // camera: world → screen
   uniform vec3 uCameraPosition;
-  uniform int  uDrawOrder[MAX_BALLS];      // ball numbers, farthest first
-
+  
   out vec3 vWorld;          // this corner of the square, in the world
   flat out int vBall;       // which ball ("flat" = same for the whole square)
 
   void main() {
-    int i = uDrawOrder[gl_InstanceID];
+    int i = ballDrawnAs(gl_InstanceID);
     vBall = i;
-    vec3  center = uBalls[i].xyz;
-    float radius = uBalls[i].w;
+    vec3  center = ballSphere(i).xyz;
+    float radius = ballSphere(i).w;
 
     vec3  toBall   = center - uCameraPosition;
     float distance = length(toBall);
@@ -489,6 +499,7 @@ export const BALL_FRAGMENT_SHADER = /* glsl */ `#version 300 es
 
   uniform mat4 uViewProjection;
   uniform vec3 uCameraPosition;
+  uniform float uGlint;   // how bright the glints are (0 = none)
 
   in vec3 vWorld;
   flat in int vBall;
@@ -513,8 +524,8 @@ export const BALL_FRAGMENT_SHADER = /* glsl */ `#version 300 es
   }
 
   void main() {
-    vec3  center = uBalls[vBall].xyz;
-    float radius = uBalls[vBall].w;
+    vec3  center = ballSphere(vBall).xyz;
+    float radius = ballSphere(vBall).w;
 
     // ---- Where does the ray through this pixel meet the ball? ----
     vec3  rayDir   = normalize(vWorld - uCameraPosition);
@@ -544,10 +555,10 @@ export const BALL_FRAGMENT_SHADER = /* glsl */ `#version 300 es
     // find its latitude / longitude (both 0..1).
     // How many checker squares this ball has: from pole to pole, and twice
     // as many around the equator.
-    float SQUARES_DOWN   = uBallColor[vBall].a;
+    float SQUARES_DOWN   = ballColor(vBall).a;
     float SQUARES_AROUND = 2.0 * SQUARES_DOWN;
 
-    vec3 n = transpose(uBallRotation[vBall]) * normal;
+    vec3 n = transpose(ballRotation(vBall)) * normal;
     float around = atan(n.z, n.x) / (2.0 * PI) + 0.5;
     float down   = acos(clamp(n.y, -1.0, 1.0)) / PI;
     vec2 square  = vec2(around * SQUARES_AROUND, down * SQUARES_DOWN);
@@ -570,7 +581,16 @@ export const BALL_FRAGMENT_SHADER = /* glsl */ `#version 300 es
 
     // ---- Final colour, mixed in linear light ----
     float shadow = shadowAt(surface, stepX, stepY, vBall);
-    vec3 color = mix(shade(vec3(1.0), shadow), shade(uBallColor[vBall].rgb, shadow), checker);
+    vec3 color = mix(shade(vec3(1.0), shadow), shade(ballColor(vBall).rgb, shadow), checker);
+
+    // Glints (a setting): where the ball mirrors the lamp into the camera,
+    // a small spot of light brighter than white — on an HDR screen it
+    // shines; on an ordinary one it is a white spot. Not in shadow.
+    if (uGlint > 0.0) {
+      vec3 toLamp = normalize(uLightPosition - surface);
+      vec3 halfway = normalize(toLamp - rayDir);
+      color += vec3(uGlint * pow(max(dot(normal, halfway), 0.0), 120.0) * (1.0 - shadow));
+    }
 
     outColor = vec4(color, coverage);
   }
@@ -592,8 +612,8 @@ export const BALL_DEPTH_FRAGMENT_SHADER = /* glsl */ `#version 300 es
   flat in int vBall;
 
   void main() {
-    vec3  center   = uBalls[vBall].xyz;
-    float radius   = uBalls[vBall].w;
+    vec3  center   = ballSphere(vBall).xyz;
+    float radius   = ballSphere(vBall).w;
     vec3  rayDir   = normalize(vWorld - uCameraPosition);
     vec3  toCenter = center - uCameraPosition;
     float along    = dot(toCenter, rayDir);
@@ -700,7 +720,10 @@ export const COPPER_FRAGMENT_SHADER = /* glsl */ `#version 300 es
   precision highp float;
   uniform float uTime;      // seconds
   uniform float uHeight;    // height of the picture in pixels
+  uniform float uShine;     // on an HDR screen: how much brighter than white the highlights get
   out vec4 outColor;
+
+  float shine = 0.0;        // how strong the brightest highlight on this pixel is
 
   const float LINES = 256.0;    // screen lines of a European (PAL) Amiga
   const float LEVELS = 15.0;    // 16 levels per colour channel: 0 … 15
@@ -715,7 +738,9 @@ export const COPPER_FRAGMENT_SHADER = /* glsl */ `#version 300 es
     float d = abs(y - center) / 0.055;          // 0 in the middle, 1 at the edge
     if (d >= 1.0) return color;
     float glow = 1.0 - d * d;
-    return barColor * glow + vec3(0.6) * pow(glow, 6.0);   // with a white highlight
+    float highlight = pow(glow, 6.0);
+    shine = max(shine, highlight);
+    return barColor * glow + vec3(0.6) * highlight;   // with a white highlight
   }
 
   void main() {
@@ -725,14 +750,20 @@ export const COPPER_FRAGMENT_SHADER = /* glsl */ `#version 300 es
     // The sky: dark blue at the top, Workbench blue at the bottom.
     vec3 color = mix(vec3(0.4, 0.53, 0.73), vec3(0.0, 0.0, 0.27), y);
 
-    // Three bars gliding up and down, each a little out of step.
-    color = addBar(color, y, 0.5 + 0.40 * sin(uTime * 0.9),       vec3(0.9, 0.1, 0.1));
-    color = addBar(color, y, 0.5 + 0.40 * sin(uTime * 0.9 + 0.7), vec3(0.1, 0.8, 0.2));
-    color = addBar(color, y, 0.5 + 0.40 * sin(uTime * 0.9 + 1.4), vec3(0.2, 0.3, 1.0));
+    // Four bars gliding up and down, each a little out of step, in the
+    // four colours of the balls (BALL_COLORS in physics.js): red, green,
+    // blue and yellow.
+    color = addBar(color, y, 0.5 + 0.40 * sin(uTime * 0.9),       vec3(0.769, 0.008, 0.200));
+    color = addBar(color, y, 0.5 + 0.40 * sin(uTime * 0.9 + 0.7), vec3(0.000, 0.624, 0.420));
+    color = addBar(color, y, 0.5 + 0.40 * sin(uTime * 0.9 + 1.4), vec3(0.000, 0.529, 0.741));
+    color = addBar(color, y, 0.5 + 0.40 * sin(uTime * 0.9 + 2.1), vec3(1.000, 0.827, 0.000));
 
     // Round to the Amiga's 16 levels per channel.
     color = floor(min(color, 1.0) * LEVELS + 0.5) / LEVELS;
-    outColor = vec4(toLinear(color), 1.0);
+    // On an HDR screen the highlights glow brighter than white (on an
+    // ordinary screen uShine is 0, so nothing changes).
+    float boost = 1.0 + uShine * floor(shine * LEVELS + 0.5) / LEVELS;
+    outColor = vec4(toLinear(color) * boost, 1.0);
   }
 `;
 
@@ -756,20 +787,52 @@ export const PRESENT_FRAGMENT_SHADER = /* glsl */ `#version 300 es
   precision highp float;
   uniform highp sampler2D uScene;
   uniform float uColorLevels;   // 0 = all colours; 15 = the Amiga's 16 levels per channel
+  uniform float uHdrRange;      // 0 = an ordinary screen; else HDR_RANGE (see below)
+  // The glowing letters (HDR): the scroller's picture, where it lies (x, y, width, height in
+  // pixels; width 0 = not shown), and how much brighter its letters get.
+  uniform sampler2D uText;
+  uniform vec4 uTextRect;
+  uniform float uTextGlow;
   out vec4 outColor;
 
   // Linear light → screen colour (sRGB). The inverse of toLinear().
   vec3 toScreen(vec3 c) {
     return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
   }
+  vec3 toLinear(vec3 c) {
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+  }
+
+  // The share of the 8 bits that holds light up to white when packing HDR.
+  const float SDR_SHARE = 0.8;
 
   void main() {
-    // Reading the off-screen picture gives linear light back automatically.
-    vec3 linear = texelFetch(uScene, ivec2(gl_FragCoord.xy), 0).rgb;
-    vec3 color = toScreen(linear);
+    // Reading the off-screen picture gives linear light back.
+    vec3 linear = max(texelFetch(uScene, ivec2(gl_FragCoord.xy), 0).rgb, 0.0);
+    // The glowing letters (HDR): lay the scroller's letters over the scene, brighter than
+    // white. (Its own canvas is hidden meanwhile.)
+    if (uTextRect.z > 0.0) {
+      vec2 t = (gl_FragCoord.xy - uTextRect.xy) / uTextRect.zw;
+      if (all(greaterThanEqual(t, vec2(0.0))) && all(lessThan(t, vec2(1.0)))) {
+        vec4 letter = texture(uText, vec2(t.x, 1.0 - t.y));   // (its first row is its top)
+        linear = mix(linear, toLinear(letter.rgb) * (1.0 + uTextGlow), letter.a);
+      }
+    }
+    // An ordinary screen shows nothing brighter than white: cut there. That
+    // is all the "tone mapping" this scene needs, and it looks exactly as
+    // the picture did when it could hold nothing brighter than white.
+    vec3 color = toScreen(min(linear, 1.0));
     // "Pixels" mode: round each of red, green and blue to the nearest of
     // the few levels the Amiga had.
     if (uColorLevels > 0.0) color = floor(color * uColorLevels + 0.5) / uColorLevels;
+    // For an HDR screen (see hdr.js), pack the light into the canvas's
+    // 8 bits for WebGPU to unpack: 0 … 0.8 holds the screen colours up to
+    // white, 0.8 … 1 the light from white to uHdrRange times white.
+    if (uHdrRange > 0.0) {
+      vec3 above = clamp((linear - 1.0) / (uHdrRange - 1.0), 0.0, 1.0);
+      color = mix(color * SDR_SHARE, SDR_SHARE + (1.0 - SDR_SHARE) * above, vec3(greaterThan(linear, vec3(1.0))));
+    }
     outColor = vec4(color, 1.0);
   }
 `;
+

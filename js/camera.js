@@ -16,7 +16,7 @@ import { Vec3, Mat4 } from './math.js';
 
 const FIELD_OF_VIEW = (45 * Math.PI) / 180;   // vertical, in radians
 const NEAR = 0.1;                             // closest visible distance
-const FAR = 100;                              // farthest visible distance
+const FAR = 1000;                             // farthest visible distance (the floor reaches almost to the horizon)
 
 const MIN_DISTANCE = 5;
 const MAX_DISTANCE = 30;

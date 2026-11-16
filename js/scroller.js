@@ -18,16 +18,20 @@
 // and only runs while it is shown.
 // =============================================================================
 
+import { wide } from './gui.js';
+
 // The text. It opens with the credit line from the bottom of the page (put
 // in front by the Scroller below), so that line can be switched off while
 // the scroller runs.
-// (The font has only A-Z, 0-9 and . , ! - ' : so anything else, such as
+// (The font has only A-Z, 0-9, ẞ, É and . , ! - ' : so anything else, such as
 // brackets, would scroll past as a blank.)
 const MESSAGE =
   ' ... A TRIBUTE TO THE DEMO THAT INTRODUCED THE AMIGA IN JANUARY 1984 ... ' +
   'GREETINGS TO DALE LUCK AND R. J. MICAL WHO WROTE THE ORIGINAL ... ' +
   'AND A VERY SPECIAL GREETING TO MY UNCLE ANDREAS ABELSSON, ALIAS KING GRUB, ' +
   'WHO INTRODUCED ME TO THE AMIGA ... ' +
+  'THANKS TO CHRISTOPHE RÉSIGNÉ, WHOSE CHECKERED TWIST V3 INSPIRED TWIST V4 ... ' +
+  'AND THANKS TO MY SIX CHILDREN, WHO ALWAYS THOUGHT MY DEMOS WERE COOL ... ' +
   'EVERY BALL IS A PERFECT SPHERE, NOT A SINGLE TRIANGLE IN SIGHT ... ' +
   'EVERY BOUNCE IS WORKED OUT EXACTLY AND IS REVERSIBLE: RUN TIME BACKWARDS AND EVERY COLLISION UNDOES ITSELF ... ' +
   'ENERGY, MOMENTUM AND ANGULAR MOMENTUM ARE CONSERVED ... ' +
@@ -50,6 +54,7 @@ const GLYPHS = {
   C: ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.'],
   D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
   E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+  'É': ['..#..', '#####', '#....', '####.', '#....', '#....', '#####'],   // E with an accent (for Résigné)
   F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....'],
   G: ['.###.', '#...#', '#....', '#.###', '#...#', '#...#', '.###.'],
   H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
@@ -86,6 +91,7 @@ const GLYPHS = {
   '!': ['..#..', '..#..', '..#..', '..#..', '..#..', '.....', '..#..'],
   '-': ['.....', '.....', '.....', '#####', '.....', '.....', '.....'],
   "'": ['..#..', '..#..', '.....', '.....', '.....', '.....', '.....'],
+  'ẞ': ['.####', '#...#', '#..#.', '#.##.', '#...#', '#...#', '#.##.'],   // the capital of ß
   ':': ['.....', '.##..', '.##..', '.....', '.##..', '.##..', '.....'],
 };
 const ROWS = 7;
@@ -104,7 +110,9 @@ export class Scroller {
     this.canvas.className = 'scroller';
     this.canvas.style.display = 'none';
     document.body.append(this.canvas);
-    this.draw2d = this.canvas.getContext('2d');
+    // Wide colour, like the scene (see setWideColor in renderer.js): the
+    // colours are taken as Display P3 where the browser can.
+    this.draw2d = this.canvas.getContext('2d', { colorSpace: 'display-p3' }) ?? this.canvas.getContext('2d');
     this.shown = false;
     this.letters = null;   // the letter sheets, made by drawLetters()
     // How fast its clock runs: 1 = normal, 0 = frozen, negative = backwards.
@@ -112,11 +120,13 @@ export class Scroller {
     // rewinds together with the balls.
     this.rate = 1;
     this.clock = 0;        // the scroller's own time, in seconds
+    this.onDraw = null;    // called after each new picture (main.js: for its glowing letters with HDR)
 
     // The whole text: the page's credit line, then MESSAGE. The font only
-    // has capitals; anything it doesn't have becomes a space.
+    // has capitals; anything it doesn't have becomes a space. (The German
+    // ß needs a hand: its capital is ẞ, but browsers turn it into SS.)
     const credit = document.getElementById('info')?.textContent ?? '';
-    this.message = (credit + MESSAGE).toUpperCase();
+    this.message = (credit + MESSAGE).replaceAll('ß', 'ẞ').toUpperCase();
   }
 
   // Show or hide the scroller.
@@ -124,7 +134,11 @@ export class Scroller {
     if (shown === this.shown) return;
     this.shown = shown;
     this.canvas.style.display = shown ? '' : 'none';
-    if (!shown) return;
+    // Switched off, it starts again from the beginning of its text next time.
+    if (!shown) {
+      this.clock = 0;
+      return;
+    }
 
     let last = performance.now();
     let drawnClock = null, drawnWidth = 0;   // what the picture on screen shows
@@ -155,7 +169,7 @@ export class Scroller {
       const sheet = document.createElement('canvas');
       sheet.width = Math.ceil(names.length * SHEET_CELL * size);
       sheet.height = Math.ceil(ROWS * size);
-      const c = sheet.getContext('2d');
+      const c = sheet.getContext('2d', { colorSpace: 'display-p3' });
       c.fillStyle = color;
       names.forEach((name, index) => {
         GLYPHS[name].forEach((row, y) => {
@@ -166,7 +180,7 @@ export class Scroller {
       });
       return sheet;
     };
-    this.letters = { pixelRatio, white: make('#ffffff'), shadow: make('#000033') };
+    this.letters = { pixelRatio, white: make('#ffffff'), shadow: make(wide('#000033')) };
     // Where each letter of the message is on the sheet (-1 = a space).
     this.sheetIndex = [...this.message].map((letter) => names.indexOf(letter));
   }
@@ -227,7 +241,7 @@ export class Scroller {
     c.globalCompositeOperation = 'source-in';
     const bands = c.createLinearGradient(0, 0, 0, HEIGHT);
     const colors = ['#ffffff', '#ffff88', '#ffdd00', '#ff8800', '#ff2200', '#ff8800', '#ffdd00', '#ffff88', '#ffffff'];
-    colors.forEach((color, index) => bands.addColorStop(index / (colors.length - 1), color));
+    colors.forEach((color, index) => bands.addColorStop(index / (colors.length - 1), wide(color)));
     c.fillStyle = bands;
     c.fillRect(0, 0, width, HEIGHT);
 
@@ -235,5 +249,6 @@ export class Scroller {
     c.globalCompositeOperation = 'destination-over';
     copyStrips(this.letters.shadow, SHADOW);
     c.globalCompositeOperation = 'source-over';
+    this.onDraw?.();
   }
 }

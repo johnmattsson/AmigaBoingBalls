@@ -35,11 +35,13 @@
 // =============================================================================
 
 import { Vec3, Quat } from './math.js';
+import { stepPrecisely } from './precise.js';
 
 // --- Scene layout ------------------------------------------------------------
 
 export const BOX_HALF_SIZE = 6;    // walls are at x, y, z = ±6
 export const BALL_RADIUS = 1;
+const DOWN = new Vec3(0, -1, 0);
 
 // --- Tunable values ---------------------------------------------------------
 // The original ran its physics once per screen refresh, so it ran twice as
@@ -54,7 +56,14 @@ export const CLICK_IMPULSE = 6;
 
 // Safety limit: never handle more collisions than this in one frame (only
 // matters if something extreme happens, like balls jammed into a corner).
-const MAX_COLLISIONS_PER_FRAME = 1000;
+const MAX_COLLISIONS_PER_FRAME = 50000;
+
+// How far ahead a collision plan looks: this many frames, but at most this
+// many seconds. Further ahead means making plans less often, but each plan
+// has to consider more pairs of balls (those that could meet within that
+// time). See CollisionPlan.
+const PLAN_FRAMES = 4;
+const MAX_PLAN_AHEAD = 0.1;
 
 // Kinds of bounce: the three coefficients explained at the top of the file.
 // These are the only four combinations that lose no energy at all (each
@@ -79,7 +88,8 @@ export const COLLISION_TYPES = {
 const TRAIL_STEP = 1 / 30;
 const MAX_TRAIL_POINTS = 400;   // per ball, however often it bounces
 
-// The four classic colours (red, green, blue, yellow). The second colour of
+// The four classic colours (red, green, blue, yellow): exactly the base
+// colours of the Swedish Natural Color System (NCS), the four hues that look pure. The second colour of
 // each ball's checker pattern is always white.
 const BALL_COLORS = [0xc40233, 0x009f6b, 0x0087bd, 0xffd300];
 
@@ -124,6 +134,11 @@ class Ball {
     // The path the ball has just flown, for drawing trails: a flat list of
     // numbers, four per point (x, y, z and the time it was there).
     this.trail = [];
+    // (Counted for physics-host.js, which passes only the trails' new points
+    // on to the page: how many points were dropped from the start of the
+    // trail, and how often it was cleared.)
+    this.trailDropped = 0;
+    this.trailCleared = 0;
 
     // Tilt each ball a little (like the original Amiga ball) and spin
     // neighbouring balls in opposite directions around the vertical axis.
@@ -140,7 +155,9 @@ class Ball {
     // The checker pattern: how many squares from pole to pole (there are
     // twice as many around the equator). A standard ball has 6; bigger
     // balls get more and smaller ones fewer, so that the squares themselves
-    // are about the same size on every ball.
+    // are about the same size on every ball. The smallest balls (radius
+    // under 0.42) get the fewest possible: 2 from pole to pole and 4 around,
+    // so 8 pieces in all, 4 coloured and 4 white.
     this.squares = Math.max(2, Math.round(6 * radius / BALL_RADIUS));
     this.mass = (radius / BALL_RADIUS) ** 2;
     this.color = BALL_COLORS[index % BALL_COLORS.length];
@@ -194,10 +211,21 @@ class Ball {
   // time it has moved since the last turn. Needed before its spin changes,
   // and once per frame for drawing.
   catchUpRotation() {
-    const speed = this.spin.length();
+    const { x: sx, y: sy, z: sz } = this.spin;
+    const speed = Math.sqrt(sx * sx + sy * sy + sz * sz);
     if (speed > 0 && this.unturnedTime !== 0) {
-      const turn = Quat.fromAxisAngle(this.spin.scale(1 / speed), speed * this.unturnedTime);
-      this.orientation = turn.multiply(this.orientation).normalize();
+      // The turn, as a quaternion (ax, ay, az, c): a rotation by
+      // speed × time around the spin axis. Then orientation = turn × orientation,
+      // made length 1 again. (Written out with plain numbers, changing the
+      // orientation in place: this runs for every ball in every frame.)
+      const half = 0.5 * speed * this.unturnedTime, s = Math.sin(half) / speed, c = Math.cos(half);
+      const ax = sx * s, ay = sy * s, az = sz * s, o = this.orientation;
+      const x = c * o.x + ax * o.w + ay * o.z - az * o.y;
+      const y = c * o.y - ax * o.z + ay * o.w + az * o.x;
+      const z = c * o.z + ax * o.y - ay * o.x + az * o.w;
+      const w = c * o.w - ax * o.x - ay * o.y - az * o.z;
+      const length = Math.sqrt(x * x + y * y + z * z + w * w) || 1;
+      o.x = x / length; o.y = y / length; o.z = z / length; o.w = w / length;
     }
     this.unturnedTime = 0;
   }
@@ -220,6 +248,15 @@ export class Physics {
     this.wallBounce = COLLISION_TYPES.smooth;   // slippery glass walls
 
     this.time = 0;             // simulated time so far (goes down when rewinding)
+    // Which way gravity pulls: straight down, unless the Tilt setting turns
+    // it with a phone or tablet (see main.js). A unit vector.
+    this.down = DOWN;
+    // Compute with more digits than the usual 16 (see precise.js)? 0 = no;
+    // 2 = about 32 digits; 4 = about 64. Slower, but running time backwards
+    // then retraces the paths for many more collisions.
+    this.precise = 0;
+    // Turn the balls for drawing them? (Not needed for an unseen copy.)
+    this.turnBalls = true;
     // Trails: how many seconds of its flight each ball remembers, for
     // drawing a line behind it. 0 = none.
     this.trailSeconds = 0;
@@ -235,8 +272,8 @@ export class Physics {
   // ---- Setting up the balls ----------------------------------------------------
 
   // Call after changing balls from outside (e.g. in the browser console), so
-  // the collision plan is worked out again. (It is also redone every second
-  // of simulated time anyway, as a safety net.)
+  // the collision plan is worked out again. (It is also made afresh every
+  // frame anyway.)
   changed() {
     this.plan = null;
   }
@@ -259,11 +296,14 @@ export class Physics {
   // Add `count` balls of `radius` in free spots, each heading off in a
   // random direction at `speed` (fewer, if the room fills up).
   addRandomBalls(count, radius, speed = 3) {
+    const spots = new FreeSpots(this);
     for (let i = 0; i < count; i++) {
-      const spot = this.findFreeSpot(radius);
+      const spot = this.findFreeSpot(radius, spots);
       if (!spot) break;
       const direction = new Vec3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
-      this.balls.push(new Ball(this.balls.length, spot, direction.normalize().scale(speed), radius));
+      const ball = new Ball(this.balls.length, spot, direction.normalize().scale(speed), radius);
+      this.balls.push(ball);
+      spots.add(ball);
     }
     this.changed();
   }
@@ -291,12 +331,14 @@ export class Physics {
     const outside = this.balls.filter(isOut);
     if (!outside.length) return;
     this.balls = this.balls.filter((ball) => !isOut(ball));
+    const spots = new FreeSpots(this);
     for (const ball of outside) {
-      const spot = this.findFreeSpot(ball.radius);
+      const spot = this.findFreeSpot(ball.radius, spots);
       if (!spot) continue;
       ball.position = spot;
       ball.trail.length = 0;
       this.balls.push(ball);
+      spots.add(ball);
     }
   }
 
@@ -304,6 +346,7 @@ export class Physics {
   setBallCount(count) {
     this.changed();
     while (this.balls.length > count) this.balls.pop();
+    const spots = new FreeSpots(this);
     while (this.balls.length < count) {
       const index = this.balls.length;
       if (index < 4 && this.sizeMix === 0 && this.ballSize <= 1.5) {
@@ -311,19 +354,22 @@ export class Physics {
         // drifting sideways. (Bigger balls than 1.5 would overlap there.)
         const d = 2.5 * (3 - index) - 3.75;       // 3.75, 1.25, -1.25, -3.75
         this.balls.push(new Ball(index, new Vec3(d, d, d), new Vec3(1.8, 0, 0), BALL_RADIUS * this.ballSize));
+        spots.add(this.balls[index]);
         continue;
       }
       // Other balls get a size from the size mix and appear in a free spot,
       // heading off in a random direction. In a crowded box a big ball may
       // not fit anywhere, so try a few other sizes, ending with the smallest.
       let radius, spot = null;
+      // (Only the last, smallest size gets the slow thorough search.)
       for (let attempt = 0; attempt < 6 && !spot; attempt++) {
         radius = attempt < 5 ? this.randomRadius() : BALL_RADIUS * this.ballSize * 2 ** -this.sizeMix;
-        spot = this.findFreeSpot(radius);
+        spot = this.findFreeSpot(radius, spots, { thorough: attempt === 5 });
       }
       if (!spot) break;   // the box is full
       const direction = new Vec3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
       this.balls.push(new Ball(index, spot, direction.normalize().scale(3), radius));
+      spots.add(this.balls[index]);
     }
   }
 
@@ -355,32 +401,26 @@ export class Physics {
 
   // A random spot inside the box where a ball of `radius` touches nothing,
   // or null if there is no room left.
-  findFreeSpot(radius) {
+  // A random spot where a ball of `radius` fits without touching the walls
+  // or any other ball, or null if there is none. When placing many balls,
+  // pass the same `spots` (a FreeSpots, see below) every time and tell it
+  // about each ball placed, so it does not start from scratch every time.
+  findFreeSpot(radius, spots = new FreeSpots(this), { thorough = true } = {}) {
+    if (spots.isFull(radius)) return null;
     const { min, max } = this.room;
-    const isClear = (spot) =>
-      this.isInside(spot, radius, 0.05) &&
-      this.balls.every((b) => b.position.distanceSq(spot) > (b.radius + radius + 0.05) ** 2);
     const between = (low, high) => low + Math.random() * (high - low);
 
     // Usually a few random tries are enough...
     for (let attempt = 0; attempt < 200; attempt++) {
       const spot = new Vec3(between(min.x, max.x), between(min.y, max.y), between(min.z, max.z));
-      if (isClear(spot)) return spot;
+      if (spots.isClear(spot, radius)) return spot;
     }
-
     // ...but in a crowded room, random tries keep missing the few gaps left.
-    // Then check a grid of spots every 0.4 units, and pick one of the free ones.
-    const free = [];
-    for (let x = min.x; x <= max.x; x += 0.4) {
-      for (let y = min.y; y <= max.y; y += 0.4) {
-        for (let z = min.z; z <= max.z; z += 0.4) {
-          const spot = new Vec3(x, y, z);
-          if (isClear(spot)) free.push(spot);
-        }
-      }
-    }
-    return free.length ? free[Math.floor(Math.random() * free.length)] : null;
+    // Then (unless only a quick look was asked for) check a grid of spots.
+    return thorough ? spots.searchEverywhere(radius) : null;
   }
+
+
 
   // ---- Energy ------------------------------------------------------------------
   // Every ball has three kinds of energy:
@@ -398,8 +438,18 @@ export class Physics {
 
   heightEnergy(gravityStrength) {
     const g = GRAVITY_SCALE * gravityStrength;
+    const down = this.down;
+    if (down === DOWN) {
+      return this.balls.reduce((sum, b) =>
+        sum + b.mass * g * (b.position.y - b.radius - this.room.floorY), 0);
+    }
+    // Tilted: height is measured upwards along the pull, from the room's
+    // lowest corner (the one farthest in the direction of `down`).
+    const { min, max } = this.room;
+    const lowest = Math.max(down.x * min.x, down.x * max.x) + Math.max(down.y * min.y, down.y * max.y)
+                 + Math.max(down.z * min.z, down.z * max.z);
     return this.balls.reduce((sum, b) =>
-      sum + b.mass * g * (b.position.y - b.radius - this.room.floorY), 0);
+      sum + b.mass * g * (lowest - down.dot(b.position) - b.radius), 0);
   }
 
   totalEnergy(gravityStrength) {
@@ -457,54 +507,94 @@ export class Physics {
     // changes direction.
     if (direction !== this.lastDirection) this.clearTrails();
     this.lastDirection = direction;
-    const gravity = new Vec3(0, -GRAVITY_SCALE * gravityStrength, 0);
+    const gravity = this.down.scale(GRAVITY_SCALE * gravityStrength);
     let timeLeft = Math.abs(seconds);
 
-    // Predict when every ball will hit every wall and every other ball. The
-    // predictions stay valid from frame to frame, so this is only redone
-    // when something changed them: the direction of time, gravity, a click,
-    // the energy or the balls themselves (see changed()), and after one
-    // second of simulated time as a safety net.
-    let plan = this.plan;
-    if (!plan || plan.direction !== direction || plan.gravityStrength !== gravityStrength || plan.now > 1) {
-      plan = this.plan = new CollisionPlan(this.balls, this.room.walls, direction, gravity, gravityStrength);
-    }
+    if (this.precise) {
+      // With 32 digits instead of 16: the same steps, in precise.js.
+      stepPrecisely(this, direction * timeLeft, gravity, this.precise);
+    } else {
+      // Balls are only moved when they are needed. Moving all of them to
+      // every single collision would take most of the time with many balls,
+      // and most of them are just flying straight on. Instead each ball
+      // remembers up to which moment it has been moved (`movedTo`, counted
+      // from when the collision plan was made), and is brought up to date
+      // just before it collides or a prediction looks at it. The path
+      // between collisions is a parabola, so moving in one step or in many
+      // gives the same result. At the end of every frame all are moved.
+      //
+      // The collision plan (see CollisionPlan below) looks a few frames
+      // ahead, so it is only made afresh now and then: when it runs out, or
+      // when something changed it.
+      let plan = this.plan;
+      let clock = plan ? plan.clock : 0;            // the present moment, counted from when the plan was made
+      const bringUpToDate = (ball) => {
+        if (ball.movedTo !== clock) {
+          ball.move(clock - ball.movedTo, gravity);
+          ball.movedTo = clock;
+        }
+      };
+      const bringAllUpToDate = () => { for (const ball of this.balls) bringUpToDate(ball); };
+      const makePlan = () => {
+        // (Here every ball is up to date: the new plan starts from now.)
+        clock = 0;
+        for (const ball of this.balls) ball.movedTo = 0;
+        const ahead = Math.max(timeLeft, Math.min(PLAN_FRAMES * timeLeft, MAX_PLAN_AHEAD));
+        return this.plan = new CollisionPlan(this.balls, this.room.walls, direction, gravity, gravityStrength, ahead, bringUpToDate);
+      };
+      const usable = plan && plan.balls === this.balls && plan.ballCount === this.balls.length &&
+        plan.walls === this.room.walls && plan.direction === direction &&
+        plan.gravityStrength === gravityStrength && plan.gravity.x === gravity.x && plan.gravity.y === gravity.y &&
+        plan.gravity.z === gravity.z && plan.now + timeLeft <= plan.horizon;
+      if (!usable) plan = makePlan();
+      plan.bringUpToDate = bringUpToDate;
 
-    for (let count = 0; count < MAX_COLLISIONS_PER_FRAME; count++) {
-      // When is the next collision, and what is it?
-      const next = plan.earliest();
-      if (next.time > timeLeft) break;   // nothing more happens this frame
+      for (let count = 0; count < MAX_COLLISIONS_PER_FRAME; count++) {
+        // When is the next collision, and what is it?
+        const next = plan.earliest();
+        if (next.time > timeLeft) break;   // nothing more happens this frame
 
-      // Move everybody exactly to that moment, then bounce.
-      this.moveAll(direction * next.time, gravity);
-      timeLeft -= next.time;
-      plan.timePassed(next.time);
-      if (next.wall) this.collideWithWall(this.balls[next.ball], next.wall);
-      else this.collideBalls(this.balls[next.ball], this.balls[next.other]);
+        // Go to that moment, bring the two up to date, and bounce.
+        clock += direction * next.time;
+        this.time += direction * next.time;
+        timeLeft -= next.time;
+        plan.timePassed(next.time);
+        const ball = this.balls[next.ball], other = next.wall ? null : this.balls[next.other];
+        bringUpToDate(ball);
+        if (other) bringUpToDate(other);
+        if (next.wall) this.collideWithWall(ball, next.wall);
+        else this.collideBalls(ball, other);
 
-      // A bounce is a corner in the path: note it in the trails.
-      if (this.trailSeconds > 0) {
-        this.recordTrail(this.balls[next.ball], true);
-        if (!next.wall) this.recordTrail(this.balls[next.other], true);
+        // A bounce is a corner in the path: note it in the trails.
+        if (this.trailSeconds > 0) {
+          this.recordTrail(ball, true);
+          if (other) this.recordTrail(other, true);
+        }
+
+        // Only the balls that just bounced change course, so only their
+        // predictions need redoing (unless one of them is now faster than the
+        // plan allowed for: then make a new plan for the rest of the frame).
+        const changed = next.wall ? [next.ball] : [next.ball, next.other];
+        if (plan.tooFast(changed)) {
+          bringAllUpToDate();
+          plan = makePlan();
+        } else {
+          plan.update(changed);
+        }
       }
 
-      // Only the balls that just bounced change course, so only their
-      // predictions need redoing.
-      plan.update(next.wall ? [next.ball] : [next.ball, next.other]);
+      clock += direction * timeLeft;
+      this.time += direction * timeLeft;
+      plan.timePassed(timeLeft);
+      bringAllUpToDate();
+      plan.clock = clock;
     }
 
-    this.moveAll(direction * timeLeft, gravity);
-    plan.timePassed(timeLeft);
-
     // Bring every ball's rotation up to date for drawing.
-    for (const ball of this.balls) ball.catchUpRotation();
+    if (this.turnBalls) for (const ball of this.balls) ball.catchUpRotation();
     if (this.trailSeconds > 0) for (const ball of this.balls) this.recordTrail(ball);
   }
 
-  moveAll(dt, gravity) {
-    for (const ball of this.balls) ball.move(dt, gravity);
-    this.time += dt;
-  }
 
   // ---- Trails --------------------------------------------------------------------
 
@@ -525,11 +615,18 @@ export class Physics {
     ball.trailCorner = isCorner;
     let old = Math.max(0, trail.length - 4 * MAX_TRAIL_POINTS);
     while (old < trail.length && Math.abs(this.time - trail[old + 3]) > this.trailSeconds) old += 4;
-    if (old) trail.splice(0, old);
+    if (old) {
+      trail.splice(0, old);
+      ball.trailDropped += old / 4;
+    }
   }
 
   clearTrails() {
-    for (const ball of this.balls) ball.trail.length = 0;
+    for (const ball of this.balls) {
+      ball.trail.length = 0;
+      ball.trailDropped = 0;
+      ball.trailCleared++;
+    }
   }
 
   // A ball hits a wall whose outward direction is `n`.
@@ -539,6 +636,9 @@ export class Physics {
     const normalVel = n.scale(n.dot(contactVel));      // part going into the wall
     const slideVel = contactVel.sub(normalVel);        // part sliding along it
 
+    // How hard it hit: its speed into the wall (for the sound).
+    const impactSpeed = Math.abs(n.dot(ball.velocity));
+
     // Kick that reverses the "into the wall" motion...
     const WALL = this.wallBounce;
     const bounce = normalVel.scale(-(1 + WALL.normal) * ball.mass);
@@ -546,9 +646,6 @@ export class Physics {
     const friction = slideVel.scale(-(1 + WALL.tangential) * ball.slideMass);
     // ...plus friction against twisting around the contact normal.
     const twist = n.scale(-n.dot(ball.spin) * (1 + WALL.angular) * ball.inertia);
-
-    // How hard it hit: its speed into the wall (for the sound).
-    const impactSpeed = Math.abs(n.dot(ball.velocity));
 
     ball.applyImpulse(lever, bounce.add(friction), twist);
     if (WALL.flipSpinAtSides && n.x !== 0) ball.spin = ball.spin.negate();
@@ -617,37 +714,271 @@ function angularMomentum(ball) {
 }
 
 // -----------------------------------------------------------------------------
-// The collision plan: a "diary" of predicted collisions.
+// Finding free spots for new balls quickly. Checking a spot against every
+// ball is slow when there are hundreds of balls and a crowded room needs
+// thousands of tries. So:
+//   - the balls are sorted into the cubes of a grid laid over the room, and
+//     a spot is only checked against the balls in its own cube and the 26
+//     around it (the cubes are wider than any ball, so that is enough);
+//   - when random tries no longer find a gap, every spot of a fine grid is
+//     checked ONCE, and the free ones are remembered for the next balls
+//     (each is checked again when it is used, as a ball may have taken it);
+//   - once a size no longer fits anywhere, that is remembered too.
+// -----------------------------------------------------------------------------
+const GAP = 0.05;   // the least space left between new balls and anything else
+
+class FreeSpots {
+  constructor(physics) {
+    this.physics = physics;
+    this.widest = 0;          // radius of the widest ball sorted in
+    this.free = new Map();    // radius → spots found free by searchEverywhere
+    this.fullFor = Infinity;  // no ball this big or bigger fits any more
+    this.build(0.5);
+  }
+
+  // Lay a grid of cubes over the room, wide enough for balls up to
+  // `radius`, and sort the balls in.
+  build(radius) {
+    const { min, max } = this.physics.room;
+    this.widest = Math.max(radius, ...this.physics.balls.map((b) => b.radius));
+    this.size = 2 * (this.widest + GAP);
+    this.min = min;
+    this.nx = Math.floor((max.x - min.x) / this.size) + 1;
+    this.ny = Math.floor((max.y - min.y) / this.size) + 1;
+    this.nz = Math.floor((max.z - min.z) / this.size) + 1;
+    this.cubes = Array.from({ length: this.nx * this.ny * this.nz }, () => []);
+    for (const ball of this.physics.balls) this.sortIn(ball);
+  }
+
+  cell(value, low, count) { return Math.min(count - 1, Math.max(0, Math.floor((value - low) / this.size))); }
+
+  sortIn(ball) {
+    const p = ball.position;
+    const x = this.cell(p.x, this.min.x, this.nx), y = this.cell(p.y, this.min.y, this.ny), z = this.cell(p.z, this.min.z, this.nz);
+    this.cubes[x + this.nx * (y + this.ny * z)].push(ball);
+  }
+
+  // A ball has been placed: from now on it is in the way.
+  add(ball) {
+    if (ball.radius > this.widest) this.build(ball.radius);
+    else this.sortIn(ball);
+  }
+
+  isFull(radius) { return radius >= this.fullFor; }
+
+  // Does a ball of `radius` fit at `spot`, inside the room and touching nothing?
+  isClear(spot, radius) {
+    if (radius > this.widest) this.build(radius);
+    if (!this.physics.isInside(spot, radius, GAP)) return false;
+    const cx = this.cell(spot.x, this.min.x, this.nx), cy = this.cell(spot.y, this.min.y, this.ny), cz = this.cell(spot.z, this.min.z, this.nz);
+    for (let z = Math.max(0, cz - 1); z <= Math.min(this.nz - 1, cz + 1); z++) {
+      for (let y = Math.max(0, cy - 1); y <= Math.min(this.ny - 1, cy + 1); y++) {
+        for (let x = Math.max(0, cx - 1); x <= Math.min(this.nx - 1, cx + 1); x++) {
+          for (const b of this.cubes[x + this.nx * (y + this.ny * z)]) {
+            const far = b.radius + radius + GAP;
+            if (b.position.distanceSq(spot) <= far * far) return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  // Check a grid of spots 0.4 units apart (once per size), and hand out
+  // a random free one; null if there is none left.
+  searchEverywhere(radius) {
+    let free = this.free.get(radius);
+    if (!free) {
+      free = [];
+      const { min, max } = this.physics.room;
+      for (let x = min.x; x <= max.x; x += 0.4) {
+        for (let y = min.y; y <= max.y; y += 0.4) {
+          for (let z = min.z; z <= max.z; z += 0.4) {
+            const spot = new Vec3(x, y, z);
+            if (this.isClear(spot, radius)) free.push(spot);
+          }
+        }
+      }
+      this.free.set(radius, free);
+    }
+    while (free.length) {
+      const i = Math.floor(Math.random() * free.length);
+      const spot = free[i];
+      free[i] = free[free.length - 1];   // (remove it from the list either way)
+      free.pop();
+      if (this.isClear(spot, radius)) return spot;
+    }
+    this.fullFor = Math.min(this.fullFor, radius);
+    return null;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// The collision plan: a "diary" of predicted collisions, made afresh at the
+// start of every frame and kept up to date during it.
 //
 // Finding the next collision means checking every ball against every wall and
-// every other ball: with 100 balls that is almost 5,000 pairs. Doing that
-// after every single bounce would be slow. But a bounce only changes the
-// course of the one or two balls involved, and every other prediction stays
-// valid. So we predict everything once per frame, and after each bounce
-// re-predict only for the balls that bounced.
+// against the other balls. With 1000 balls there are almost 500,000 pairs,
+// far too many to check after every bounce, or even once per frame. But in
+// one frame a ball only travels a short way, so it can only meet balls that
+// are already close by. The plan therefore starts by working out how far
+// any ball can possibly travel before the frame is over (`reach`, from the
+// fastest ball's speed plus a margin), sorts the balls into the cubes of a
+// coarse grid, and lists as "neighbours" only the pairs that are near enough
+// to meet within the frame. Pairs that are not listed cannot collide before
+// the next plan is made, so nothing is missed: the result is exactly what
+// checking all pairs would give, only much faster.
+//
+// After a bounce only the one or two balls involved change course, so only
+// their predictions are redone. Should a bounce make a ball faster than the
+// plan allowed it (its own speed limit, see nearbyPairs), the plan says so
+// (`tooFast`) and a new one is made.
 //
 // For each ball we also remember its own earliest event ("best"), so finding
 // the overall next collision only means looking at one entry per ball.
 // All times are measured from when the plan was made.
 // -----------------------------------------------------------------------------
+const SPEED_MARGIN = 1.25;   // allow balls to become this much faster than they are now
+const TYPICAL_SPEEDS = 3;    // "typical" speeds go up to this many times the average (rms) speed
+
+// Which pairs of balls are near enough to meet within the next `horizon`
+// seconds, assuming no ball becomes faster than its own speed limit (worked
+// out here, with a margin, and returned as `speedLimits`)? Used by the
+// collision plans of both the normal physics and the precise one
+// (precise.js).
+//
+// Every ball gets the same limit, a little above the fastest typical speed,
+// except a ball that is much faster than the rest (one that was just pushed,
+// say): it gets a limit of its own. Two balls can only meet if they are
+// closer than the distance both can travel, so only the fast ball looks
+// further ahead. (With one limit for all, set by the fastest ball, a single
+// push in the Gas preset made every ball look 50 times as many neighbours
+// ahead, and the physics took up to a third of a second per frame.)
+export function nearbyPairs(balls, gravity, horizon) {
+  const n = balls.length;
+  // The typical speed: the fastest one, but not more than TYPICAL_SPEEDS
+  // times the average (root-mean-square) speed.
+  let fastest = 0, biggest = 0, squares = 0;
+  const speed = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const b = balls[i];
+    speed[i] = b.velocity.length();
+    fastest = Math.max(fastest, speed[i]);
+    biggest = Math.max(biggest, b.radius);
+    squares += speed[i] * speed[i];
+  }
+  const typical = Math.min(fastest, TYPICAL_SPEEDS * Math.sqrt(squares / Math.max(1, n)));
+  const speedLimits = new Float64Array(n);
+  for (let i = 0; i < n; i++) speedLimits[i] = Math.max(speed[i], typical) * SPEED_MARGIN + 1e-9;
+  // (Gravity pulls all balls alike, so it does not bring two balls closer;
+  // but it can speed up a ball between bounces, hence the extra g · horizon.)
+  const g = gravity.length();
+  const extra = 2 * g * horizon;
+  const reachOf = (limitA, limitB) => (limitA + limitB + extra) * horizon;
+
+  // Sort the balls into grid cubes as wide as the longest distance at
+  // which two typical balls can meet; then a typical ball's possible
+  // partners are all in its own cube or the 26 around it. A faster ball
+  // looks further, as many cubes out as its reach needs. (If the balls are
+  // spread over a huge space, the cubes are made bigger so there are not
+  // too many.)
+  let lowX = Infinity, lowY = Infinity, lowZ = Infinity, highX = -Infinity, highY = -Infinity, highZ = -Infinity;
+  for (const b of balls) {
+    const p = b.position;
+    lowX = Math.min(lowX, p.x); lowY = Math.min(lowY, p.y); lowZ = Math.min(lowZ, p.z);
+    highX = Math.max(highX, p.x); highY = Math.max(highY, p.y); highZ = Math.max(highZ, p.z);
+  }
+  const typicalLimit = typical * SPEED_MARGIN + 1e-9;
+  let size = 2 * biggest + reachOf(typicalLimit, typicalLimit), nx, ny, nz;
+  for (;;) {
+    nx = Math.floor((highX - lowX) / size) + 1;
+    ny = Math.floor((highY - lowY) / size) + 1;
+    nz = Math.floor((highZ - lowZ) / size) + 1;
+    if (nx * ny * nz <= 8 * n + 64) break;
+    size *= 1.5;
+  }
+  const cubeOf = new Int32Array(n);
+  const start = new Int32Array(nx * ny * nz + 1);         // balls of cube c: inCube[start[c] … start[c+1])
+  for (let i = 0; i < n; i++) {
+    const p = balls[i].position;
+    const c = Math.floor((p.x - lowX) / size) + nx * (Math.floor((p.y - lowY) / size) + ny * Math.floor((p.z - lowZ) / size));
+    cubeOf[i] = c;
+    start[c + 1]++;
+  }
+  for (let c = 0; c < nx * ny * nz; c++) start[c + 1] += start[c];
+  const inCube = new Int32Array(n), filled = start.slice(0, nx * ny * nz);
+  for (let i = 0; i < n; i++) inCube[filled[cubeOf[i]]++] = i;
+
+  // Each pair is found by the faster of its two balls (or, at equal limits,
+  // by the one with the lower number), which looks far enough for both.
+  const pairA = [], pairB = [];
+  for (let i = 0; i < n; i++) {
+    const a = balls[i], pa = a.position, limit = speedLimits[i];
+    const cubes = Math.ceil((a.radius + biggest + reachOf(limit, limit)) / size);   // how many cubes out
+    const c = cubeOf[i], x = c % nx, y = Math.floor(c / nx) % ny, z = Math.floor(c / (nx * ny));
+    for (let cz = Math.max(0, z - cubes); cz <= Math.min(nz - 1, z + cubes); cz++) {
+      for (let cy = Math.max(0, y - cubes); cy <= Math.min(ny - 1, y + cubes); cy++) {
+        for (let cx = Math.max(0, x - cubes); cx <= Math.min(nx - 1, x + cubes); cx++) {
+          const cube = cx + nx * (cy + ny * cz);
+          for (let k = start[cube]; k < start[cube + 1]; k++) {
+            const j = inCube[k];
+            const other = speedLimits[j];
+            if (other > limit || (other === limit && j <= i)) continue;   // the other one finds it
+            const b = balls[j], pb = b.position;
+            const ox = pb.x - pa.x, oy = pb.y - pa.y, oz = pb.z - pa.z;
+            const far = a.radius + b.radius + reachOf(limit, other);
+            if (ox * ox + oy * oy + oz * oz < far * far) { pairA.push(i); pairB.push(j); }
+          }
+        }
+      }
+    }
+  }
+
+  // The pairs, and for every ball the list of its pairs.
+  const pairs = pairA.length;
+  const firstPair = new Int32Array(n + 1);
+  for (let p = 0; p < pairs; p++) { firstPair[pairA[p] + 1]++; firstPair[pairB[p] + 1]++; }
+  for (let i = 0; i < n; i++) firstPair[i + 1] += firstPair[i];
+  const pairsOf = new Int32Array(2 * pairs);
+  const fill = firstPair.slice(0, n);
+  for (let p = 0; p < pairs; p++) {
+    pairsOf[fill[pairA[p]]++] = p;
+    pairsOf[fill[pairB[p]]++] = p;
+  }
+  return { speedLimits, pairA: Int32Array.from(pairA), pairB: Int32Array.from(pairB), firstPair, pairsOf };
+}
+
 class CollisionPlan {
-  constructor(balls, walls, direction, gravity, gravityStrength) {
+  // `horizon`: how far ahead (in simulated seconds) the plan must be right.
+  // `bringUpToDate(ball)`: moves a ball to the present moment (see
+  // Physics.update: balls are only moved when they are needed).
+  constructor(balls, walls, direction, gravity, gravityStrength, horizon, bringUpToDate) {
     this.balls = balls;
+    this.ballCount = balls.length;
+    this.bringUpToDate = bringUpToDate;
     this.walls = walls;
+    this.horizon = horizon;
+    this.clock = 0;   // (see Physics.update)
     this.direction = direction;
     this.gravity = gravity;
     this.gravityStrength = gravityStrength;
     this.now = 0;                                   // time passed since made
     const n = balls.length;
-    this.pairTime = new Float64Array(n * n).fill(Infinity);   // [i * n + j]
+
+    // Which pairs of balls are near enough to meet during the plan?
+    const near = nearbyPairs(balls, gravity, horizon);
+    this.speedLimits = near.speedLimits;
+    this.pairA = near.pairA;
+    this.pairB = near.pairB;
+    this.firstPair = near.firstPair;   // ball i's pairs: pairsOf[firstPair[i] … firstPair[i+1])
+    this.pairsOf = near.pairsOf;
+    this.pairTime = new Float64Array(this.pairA.length).fill(Infinity);
+
     this.wallTime = new Float64Array(n).fill(Infinity);
     this.wallNormal = new Array(n).fill(null);
     this.best = new Array(n);                       // each ball's earliest event
-
-    for (let i = 0; i < n; i++) {
-      this.predictWall(i);
-      for (let j = i + 1; j < n; j++) this.predictPair(i, j);
-    }
+    for (let i = 0; i < n; i++) this.predictWall(i);
+    for (let p = 0; p < this.pairA.length; p++) this.predictPair(p);
     for (let i = 0; i < n; i++) this.findBest(i);
   }
 
@@ -660,28 +991,48 @@ class CollisionPlan {
 
   timePassed(t) { this.now += t; }
 
+  // Has a bounce made one of these balls faster than the plan allows for?
+  // Then the plan could miss a collision, and a new one must be made.
+  tooFast(changed) {
+    return changed.some((i) => this.balls[i].velocity.length() > this.speedLimits[i]);
+  }
+
   // Re-predict everything involving the balls in `changed`.
   update(changed) {
-    const n = this.balls.length;
+    // Their own predictions.
     for (const a of changed) {
       this.predictWall(a);
-      for (let k = 0; k < n; k++) if (k !== a) this.predictPair(a, k);
+      for (let q = this.firstPair[a]; q < this.firstPair[a + 1]; q++) this.predictPair(this.pairsOf[q]);
     }
-    for (let k = 0; k < n; k++) {
-      const best = this.best[k];
-      if (changed.includes(k) || changed.includes(best.ball) || changed.includes(best.other)) {
-        this.findBest(k);   // its earliest event involved a changed ball: look again
-      } else {
-        // Otherwise only the new predictions with the changed balls can beat it.
-        for (const a of changed) {
-          const t = this.pairTime[k * n + a];
-          if (t < best.time) this.best[k] = { time: t, ball: k, other: a };
-        }
+    // Only these balls and their neighbours can have a different earliest
+    // event now.
+    for (const a of changed) {
+      this.recheck(a, changed);
+      for (let q = this.firstPair[a]; q < this.firstPair[a + 1]; q++) {
+        const p = this.pairsOf[q];
+        this.recheck(this.pairA[p] === a ? this.pairB[p] : this.pairA[p], changed);
+      }
+    }
+  }
+
+  recheck(k, changed) {
+    const best = this.best[k];
+    if (changed.includes(k) || changed.includes(best.ball) || changed.includes(best.other)) {
+      this.findBest(k);   // its earliest event involved a changed ball: look again
+      return;
+    }
+    // Otherwise only the new predictions with the changed balls can beat it.
+    for (let q = this.firstPair[k]; q < this.firstPair[k + 1]; q++) {
+      const p = this.pairsOf[q];
+      const other = this.pairA[p] === k ? this.pairB[p] : this.pairA[p];
+      if (changed.includes(other) && this.pairTime[p] < this.best[k].time) {
+        this.best[k] = { time: this.pairTime[p], ball: k, other };
       }
     }
   }
 
   predictWall(i) {
+    this.bringUpToDate(this.balls[i]);
     let time = Infinity, normal = null;
     for (const wall of this.walls) {
       const t = timeUntilWall(this.balls[i], wall, this.direction, this.gravity);
@@ -691,20 +1042,19 @@ class CollisionPlan {
     this.wallNormal[i] = normal;
   }
 
-  predictPair(i, j) {
-    const t = this.now + timeUntilBallsTouch(this.balls[i], this.balls[j], this.direction);
-    const n = this.balls.length;
-    this.pairTime[i * n + j] = t;
-    this.pairTime[j * n + i] = t;
+  predictPair(p) {
+    this.bringUpToDate(this.balls[this.pairA[p]]);
+    this.bringUpToDate(this.balls[this.pairB[p]]);
+    this.pairTime[p] = this.now + timeUntilBallsTouch(this.balls[this.pairA[p]], this.balls[this.pairB[p]], this.direction);
   }
 
   // Ball i's earliest event: its wall hit or its first hit with another ball.
   findBest(i) {
-    const n = this.balls.length;
     let best = { time: this.wallTime[i], ball: i, wall: this.wallNormal[i] };
-    for (let j = 0; j < n; j++) {
-      const t = this.pairTime[i * n + j];
-      if (j !== i && t < best.time) best = { time: t, ball: i, other: j };
+    for (let q = this.firstPair[i]; q < this.firstPair[i + 1]; q++) {
+      const p = this.pairsOf[q];
+      const t = this.pairTime[p];
+      if (t < best.time) best = { time: t, ball: i, other: this.pairA[p] === i ? this.pairB[p] : this.pairA[p] };
     }
     this.best[i] = best;
   }

@@ -17,6 +17,18 @@
 // drag around by its title bar, for any content.
 // =============================================================================
 
+// Wide colour (Display P3), as in the scene: the same numbers as the hex
+// colour '#rrggbb', but taken as Display P3, so they come out deeper on a
+// wide-colour screen. (A plain hex colour is converted to look exactly as in
+// sRGB.) Where the browser doesn't know P3 colours, the hex colour itself.
+const P3_COLORS = globalThis.CSS?.supports?.('color', 'color(display-p3 1 0 0)') ?? false;
+export function wide(hex) {
+  if (!P3_COLORS) return hex;
+  const n = parseInt(hex.slice(1), 16);
+  const part = (shift) => (((n >> shift) & 255) / 255).toFixed(4);
+  return `color(display-p3 ${part(16)} ${part(8)} ${part(0)})`;
+}
+
 export class Panel {
   constructor(parent) {
     this.root = element('div', 'panel closed');   // closed by default, like before
@@ -82,63 +94,11 @@ export class Panel {
   // Returns controls for main.js: refresh() redraws it after the value was
   // changed elsewhere, setMax() changes the range, `dragging` tells whether
   // the user is holding it right now, and `row` is its row in the panel.
-  addSlider(label, target, key, { min, max, step = 0.01, readOnly = false, onChange } = {}) {
+  addSlider(label, target, key, options = {}) {
     const row = this.addRow(label);
-    const track = element('div', 'slider sunken');
-    // Read-only values are shown as a gauge that fills up; adjustable ones
-    // get a knob you can drag, like an Amiga "proportional gadget".
-    const marker = element('div', readOnly ? 'slider-fill' : 'slider-knob raised');
-    track.append(marker);
-    const number = element('div', 'slider-number sunken');
-    row.append(track, number);
-
-    const decimals = Math.max(0, -Math.floor(Math.log10(step)));
-    let held = false;   // is the user holding this slider right now?
-    const show = () => {
-      const value = target[key];
-      const fraction = Math.min(1, Math.max(0, (value - min) / (max - min)));
-      if (readOnly) {
-        marker.style.width = `${fraction * 100}%`;
-      } else {
-        // The knob moves from the left end to the right end of the track,
-        // so its left edge travels across (100 % − knob width).
-        marker.style.left = `calc(${fraction} * (100% - ${marker.offsetWidth || 0}px))`;
-      }
-      number.textContent = value.toFixed(decimals);
-    };
-
-    if (!readOnly) {
-      // Turn a mouse/finger position on the track into a value.
-      const setFromPointer = (e) => {
-        const rect = track.getBoundingClientRect();
-        const fraction = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-        const value = Number((Math.round((min + fraction * (max - min)) / step) * step).toFixed(decimals));
-        if (value === target[key]) return;   // only react to real changes
-        target[key] = value;
-        show();
-        onChange?.(value);
-      };
-      track.addEventListener('pointerdown', (e) => {
-        track.setPointerCapture(e.pointerId);
-        held = true;
-        setFromPointer(e);
-      });
-      track.addEventListener('lostpointercapture', () => { held = false; });
-      track.addEventListener('pointermove', (e) => {
-        if (track.hasPointerCapture(e.pointerId)) setFromPointer(e);
-      });
-    }
-
     // The knob's width is only known once the panel is visible, so redraw
-    // whenever it is opened (and right away for the gauge).
-    this.root.addEventListener('click', show);
-    show();
-    return {
-      row,
-      refresh: show,
-      setMax: (newMax) => { max = newMax; show(); },
-      get dragging() { return held; },
-    };
+    // whenever it is clicked open.
+    return { row, ...slider(row, target, key, options, this.root) };
   }
 
   // A row that just shows a piece of text, e.g. "1.23 ms".
@@ -146,7 +106,7 @@ export class Panel {
     const row = this.addRow(label);
     const box = element('div', 'readout sunken');
     row.append(box);
-    return { row, set: (text) => { box.textContent = text; } };
+    return { row, box, set: (text) => { box.textContent = text; } };
   }
 
   // An on/off box for a true/false value: shows a tick when on.
@@ -219,17 +179,42 @@ export class Panel {
 // OK button that closes it. Like every window it can be dragged and has a
 // close gadget. Returns the window (see showWindow).
 //   paragraphs: a list of strings; one starting with "# " becomes a heading.
+//
+// `paragraphs` can also be a list of parts, [{ name, paragraphs }, ...]: the
+// requester then has a tab for each part at the top, and shows one at a time.
 export function showRequester(title, paragraphs, onClose) {
   const content = element('div', 'requester');
   const body = element('div', 'requester-body');
-  for (const paragraph of paragraphs) {
-    const isHeading = paragraph.startsWith('# ');
-    body.append(element('p', isHeading ? 'requester-heading' : '', isHeading ? paragraph.slice(2) : paragraph));
-  }
+  const show = (list) => {
+    body.replaceChildren();
+    for (const paragraph of list) {
+      const isHeading = paragraph.startsWith('# ');
+      body.append(element('p', isHeading ? 'requester-heading' : '', isHeading ? paragraph.slice(2) : paragraph));
+    }
+    body.scrollTop = 0;
+  };
   const buttons = element('div', 'requester-buttons');
   const ok = element('button', 'raised', 'OK');
   buttons.append(ok);
-  content.append(body, buttons);
+  if (typeof paragraphs[0] === 'object') {
+    const tabs = element('div', 'requester-tabs');
+    const tabButtons = paragraphs.map((part, i) => {
+      const tab = element('button', 'raised', part.name);
+      tab.addEventListener('click', () => choose(i));
+      return tab;
+    });
+    const choose = (i) => {
+      tabButtons.forEach((tab, k) => tab.classList.toggle('chosen', k === i));
+      show(paragraphs[i].paragraphs);
+    };
+    tabs.append(...tabButtons);
+    body.classList.add('in-parts');   // (the same height for every part)
+    content.append(tabs, body, buttons);
+    choose(0);
+  } else {
+    show(paragraphs);
+    content.append(body, buttons);
+  }
 
   const shown = showWindow(title, content, onClose);
   ok.addEventListener('click', shown.close);
@@ -245,6 +230,12 @@ export function showRequester(title, paragraphs, onClose) {
 // With `onResize`, the window also gets a sizing gadget in its bottom-right
 // corner. Dragging it calls onResize(width, height) with the size the
 // content should take (in CSS pixels); the content resizes itself.
+//
+// With `onZoom`, the title bar also gets a zoom gadget at its right end (as
+// on the Amiga: a box in a box), which calls onZoom().
+//
+// Returns { close, element }. Setting onEscape on it lets Escape do
+// something else first: if onEscape() returns true, the window stays open.
 let frontLayer = 10;   // each window that comes to the front gets the next layer
 const openWindows = [];   // every window that is open: { element, close }
 
@@ -253,7 +244,8 @@ const openWindows = [];   // every window that is open: { element, close }
 export function closeFrontWindow() {
   if (!openWindows.length) return false;
   const layer = (entry) => Number(entry.element.style.zIndex);
-  openWindows.reduce((front, entry) => (layer(entry) > layer(front) ? entry : front)).close();
+  const front = openWindows.reduce((front, entry) => (layer(entry) > layer(front) ? entry : front));
+  if (!front.onEscape?.()) front.close();
   return true;
 }
 
@@ -266,12 +258,20 @@ addEventListener('resize', () => {
   }
 });
 
-export function showWindow(title, content, onClose, onResize) {
+export function showWindow(title, content, onClose, onResize, onZoom) {
   const window = element('div', 'window raised');
   const bar = element('div', 'panel-title window-bar');
   const closeGadget = element('button', 'window-close raised');
   closeGadget.setAttribute('aria-label', 'Close');
   bar.append(closeGadget, element('span', '', title));
+  let zoomGadget = null;
+  if (onZoom) {
+    zoomGadget = element('button', 'window-zoom zoom-gadget raised');
+    zoomGadget.setAttribute('aria-label', 'Full screen');
+    zoomGadget.title = 'Full screen';
+    zoomGadget.addEventListener('click', onZoom);
+    bar.append(zoomGadget);
+  }
   window.append(bar, content);
   document.body.append(window);
 
@@ -295,7 +295,7 @@ export function showWindow(title, content, onClose, onResize) {
   // Dragging: while the title bar is held, the window follows the pointer.
   let grab = null;   // where on the window the pointer took hold
   bar.addEventListener('pointerdown', (e) => {
-    if (e.target === closeGadget) return;
+    if (e.target === closeGadget || e.target === zoomGadget) return;
     bar.setPointerCapture(e.pointerId);
     grab = { x: e.clientX - window.offsetLeft, y: e.clientY - window.offsetTop };
   });
@@ -323,7 +323,8 @@ export function showWindow(title, content, onClose, onResize) {
     sizeGadget.addEventListener('lostpointercapture', () => { held = null; });
   }
 
-  return { close };
+  entry.element = window;
+  return entry;
 }
 
 // Small helper: create an element with a class name and optional text.
@@ -332,4 +333,104 @@ function element(tag, className, text = '') {
   el.className = className;
   if (text) el.textContent = text;
   return el;
+}
+
+// A slider added to `row`: a sunken track with a raised knob (or, if
+// readOnly, a gauge that fills up), and the number next to it. It reads and
+// writes target[key]. Shared by the panel and the speed bar.
+function slider(row, target, key, { min, max, step = 0.01, readOnly = false, onChange } = {}, redrawOn = null) {
+    const track = element('div', 'slider sunken');
+    // Read-only values are shown as a gauge that fills up; adjustable ones
+    // get a knob you can drag, like an Amiga "proportional gadget".
+    const marker = element('div', readOnly ? 'slider-fill' : 'slider-knob raised');
+    track.append(marker);
+    const number = element('div', 'slider-number sunken');
+    row.append(track, number);
+
+    const decimals = Math.max(0, -Math.floor(Math.log10(step)));
+    let held = false;   // is the user holding this slider right now?
+    const show = () => {
+      const value = target[key];
+      const fraction = Math.min(1, Math.max(0, (value - min) / (max - min)));
+      if (readOnly) {
+        marker.style.width = `${fraction * 100}%`;
+      } else {
+        // The knob moves from the left end to the right end of the track,
+        // so its left edge travels across (100 % − knob width).
+        marker.style.left = `calc(${fraction} * (100% - ${marker.offsetWidth || 0}px))`;
+      }
+      number.textContent = value.toFixed(decimals);
+    };
+
+    if (!readOnly) {
+      // Turn a mouse/finger position on the track into a value.
+      const setFromPointer = (e) => {
+        const rect = track.getBoundingClientRect();
+        const fraction = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        const value = Number((Math.round((min + fraction * (max - min)) / step) * step).toFixed(decimals));
+        if (value === target[key]) return;   // only react to real changes
+        target[key] = value;
+        show();
+        onChange?.(value);
+      };
+      track.addEventListener('pointerdown', (e) => {
+        track.setPointerCapture(e.pointerId);
+        held = true;
+        setFromPointer(e);
+      });
+      track.addEventListener('lostpointercapture', () => { held = false; });
+      track.addEventListener('pointermove', (e) => {
+        if (track.hasPointerCapture(e.pointerId)) setFromPointer(e);
+      });
+    }
+
+    redrawOn?.addEventListener('click', show);
+    show();
+    return {
+      refresh: show,
+      setMax: (newMax) => { max = newMax; show(); },
+      get dragging() { return held; },
+    };
+}
+
+// The speed bar: the speed of time, always on screen in the top-left
+// corner, with three buttons: run backwards, pause/carry on, run forwards.
+// `buttons` is a list of [label, onClick].
+export function addSpeedBar(parent, target, key, options, buttons) {
+  const bar = element('div', 'speed-bar raised');
+  for (const [label, onClick] of buttons) {
+    const button = element('button', 'raised', label);
+    button.addEventListener('click', onClick);
+    bar.append(button);
+  }
+  bar.append(element('span', 'speed-label', 'Speed'));
+  parent.append(bar);
+  return slider(bar, target, key, options, null);
+}
+
+// The preset bar: the ready-made scenes, always on screen below the speed
+// bar: < and > step through them, the name in the middle steps on too
+// (shift-click or right-click: back), and Restart starts the scene again.
+export function addPresetBar(parent, target, key, choices, onChange, onRestart) {
+  const bar = element('div', 'preset-bar raised');
+  const back = element('button', 'raised', '<');
+  const name = element('button', 'raised preset-name');
+  const forward = element('button', 'raised', '>');
+  const restart = element('button', 'raised preset-restart', 'Restart');
+  const current = () => Math.max(0, choices.findIndex((choice) => choice.value === target[key]));
+  const show = () => { name.textContent = choices[current()].label; };
+  const step = (by) => {
+    target[key] = choices[(current() + by + choices.length) % choices.length].value;
+    show();
+    onChange(target[key]);
+  };
+  back.addEventListener('click', () => step(-1));
+  forward.addEventListener('click', () => step(1));
+  name.addEventListener('click', (e) => step(e.shiftKey ? -1 : 1));
+  name.addEventListener('contextmenu', (e) => { e.preventDefault(); step(-1); });
+  restart.addEventListener('click', onRestart);
+  bar.append(back, name, forward, restart);
+  parent.append(bar);
+  show();
+  return { refresh: show };
 }
