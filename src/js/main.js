@@ -14,6 +14,7 @@
 
 import { Physics, COLLISION_TYPES, BOX_HALF_SIZE, boxRoom } from './physics.js';
 import { Renderer, maxLampTilt } from './renderer.js';
+import { GpuRenderer } from './gpu-renderer.js';
 import { createHdrPresenter, HDR_RANGE } from './hdr.js';
 import { OrbitCamera } from './camera.js';
 import { Sounds } from './audio.js';
@@ -25,6 +26,14 @@ import { Scroller } from './scroller.js';
 import { PRESETS, PRESET_DEFAULTS } from './presets.js';
 import { DRIFTING, LOST } from './rewindcheck.js';
 import { PhysicsClient } from './physics-client.js';
+
+// Running now: should the page have said meanwhile that it is still
+// starting (index.html), the credit line comes back (before the scroller,
+// which begins with it, reads it).
+{
+  const info = document.getElementById('info');
+  if (info.dataset.credit) { info.innerHTML = info.dataset.credit; delete info.dataset.credit; }
+}
 
 // Values the settings panel can change.
 const settings = {
@@ -379,6 +388,12 @@ const speedSlider = addSpeedBar(document.body, settings, 'speed', { min: -5, max
   ['>', () => setSpeed(1)],       // run forwards
 ]);
 controls.push(speedSlider);
+// While the Twist is full screen nothing of the scene can be seen, so the
+// balls pause meanwhile (which also spares the computer): the animation runs
+// at speed 0, whatever the Speed setting says, and carries on at that speed
+// when the Twist comes back. (Also after a preset was chosen meanwhile.)
+let twistFull = false;
+twistOptions.onFullScreen = (on) => { twistFull = on; needsRedraw = true; };
 
 // ---- Full screen ------------------------------------------------------------------
 // The zoom gadget at the right end of the title bar (or the F key) puts the
@@ -815,7 +830,7 @@ const details = {
   graphics: panel.addReadout('Graphics'),  // graphics card time per drawn frame
   maxFps: panel.addReadout('Max FPS'),     // how fast it could go without a screen limit
   hits: panel.addReadout('Hits/s'),        // ball-on-ball collisions per second
-  // Frames that came late: more than 1.5 screen refreshes after the one
+  // Frames that came late: more than 1.5 times the usual time after the one
   // before, so one picture stayed on screen twice and the motion jerks.
   // (The FPS above can still say 60 then: it counts a whole second.)
   late: panel.addReadout('Late frames'),
@@ -1107,10 +1122,13 @@ document.addEventListener('visibilitychange', keepAwake);
 addEventListener('pointerdown', keepAwake);
 
 // HDR screens (the HDR slider on the Look page; see hdr.js). The scene is
-// then drawn by a second renderer, on an OffscreenCanvas that never shows
-// on the page, and WebGPU shows it; the page's canvas stays as it was,
-// invisible, and still takes the clicks. With HDR off again, the page's
-// own renderer takes over once more.
+// then drawn by a second renderer: with WebGPU, straight onto a canvas of
+// its own that can go brighter than white (see gpu-renderer.js). The
+// page's canvas stays as it was, invisible, and still takes the clicks.
+// With HDR off again, the page's own renderer takes over once more.
+// (Should the WebGPU renderer fail, the older way is used: WebGL draws on
+// an OffscreenCanvas that never shows, and WebGPU copies each picture over
+// to show it — see hdr.js. boing.hdrByWebGl = true picks that way, to compare.)
 let screenRenderer = renderer;
 
 // The browser can take the graphics card away from the page ("context
@@ -1147,18 +1165,31 @@ async function setHdr(on) {
     return 'HDR off';
   }
   if (renderer.hdr) return 'HDR is already on';
+  const onLost = (why) => {
+    useRenderer(screenRenderer);
+    settings.hdrStrength = 0;
+    hdrSlider?.refresh();
+    hdrChanged();
+    console.warn('HDR switched off: WebGPU stopped (' + why + ')');
+  };
+  let gpuError = null;
+  if (!window.boing?.hdrByWebGl) {
+    const { renderer: gpuRenderer, error } = await GpuRenderer.create(canvas, { onLost });
+    if (gpuRenderer) {
+      useRenderer(gpuRenderer);
+      return screenIsHdrMessage(gpuRenderer.hdr);
+    }
+    gpuError = error;
+    if (error === 'this browser has no WebGPU' || error === 'WebGPU found no graphics card') {
+      twistOptions.hdr = false;
+      return 'HDR not possible: ' + error + '.';
+    }
+    console.warn('HDR: the WebGPU renderer failed (' + error + '); using WebGL and WebGPU together');
+  }
   if (!renderer.floatTarget) { twistOptions.hdr = false; return 'HDR not possible: this graphics card can\'t draw in floating point.'; }
   if (typeof OffscreenCanvas === 'undefined') { twistOptions.hdr = false; return 'HDR not possible: this browser has no OffscreenCanvas.'; }
-  const { presenter, error } = await createHdrPresenter(canvas, HDR_RANGE, {
-    onLost: (why) => {
-      useRenderer(screenRenderer);
-      settings.hdrStrength = 0;
-      hdrSlider?.refresh();
-      hdrChanged();
-      console.warn('HDR switched off: WebGPU stopped (' + why + ')');
-    },
-  });
-  if (error) { twistOptions.hdr = false; return 'HDR not possible: ' + error + '.'; }
+  const { presenter, error } = await createHdrPresenter(canvas, HDR_RANGE, { onLost });
+  if (error) { twistOptions.hdr = false; return 'HDR not possible: ' + (gpuError ?? error) + '.'; }
   // (Its shaders are compiled in the background meanwhile, where the browser
   // can: the page keeps drawing as before until they are ready, rather than
   // stopping for a quarter of a second on the first HDR frame.)
@@ -1174,7 +1205,10 @@ async function setHdr(on) {
   }
   hdrRenderer.hdr = presenter;
   useRenderer(hdrRenderer);
-  return presenter.screenIsHdr
+  return screenIsHdrMessage(presenter);
+}
+function screenIsHdrMessage(hdr) {
+  return hdr.screenIsHdr
     ? 'HDR on'
     : 'HDR on, but this screen says it shows no HDR (on a Mac or in Windows, HDR may need switching on)';
 }
@@ -1194,11 +1228,6 @@ window.boing = { physics, camera, settings, sounds, scroller, rewindCheck, apply
   tinker: (code) => physics.tinker(code) };   // (for trying things in the console)
 Object.defineProperty(window.boing, 'renderer', { get: () => renderer });   // (whichever draws now)
 
-// If the graphics driver resets (rare, e.g. after the computer sleeps),
-// the simplest robust recovery is to reload the page.
-canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
-canvas.addEventListener('webglcontextrestored', () => location.reload());
-
 
 // --- Animation loop ----------------------------------------------------------
 // The browser calls frame() before every screen refresh (60 times a second on
@@ -1216,6 +1245,9 @@ const counts = { refreshes: 0, drawn: 0, steps: 0, physicsMs: 0, drawMs: 0, late
 // is called less often. The highest rate ever seen is therefore the
 // screen's real rate.
 let screenRate = 1;
+// The last few times between frames, for telling a late frame (see frame()).
+const recentGaps = [];
+const usualGap = () => [...recentGaps].sort((a, b) => a - b)[recentGaps.length >> 1];
 
 // While the page is hidden (another tab is in front, or the browser is
 // minimised), everything stops: no physics, no drawing, and audio.js
@@ -1243,15 +1275,26 @@ function frame(now) {
   // Seconds since the last frame. Capped, so that coming back to a tab that
   // was hidden for a minute doesn't make everything jump.
   const elapsed = Math.min((now - lastTime) / 1000, 0.1);
-  // (A late frame: see details.late. Longer gaps than 0.1 s are pauses,
-  // such as a hidden tab, not stutter.)
-  if (screenRate > 0 && elapsed < 0.1 && now - lastTime > 1500 / screenRate) counts.late++;
+  // A late frame (see details.late): a gap more than 1.5 times the usual one.
+  // "Usual" is the middle value of the last 31 gaps, not the screen's highest
+  // rate: a screen can change its rate on the fly (a MacBook in Low Power
+  // Mode goes from 120 to 60 Hz, or the window moves to another screen), and
+  // evenly slower frames are no stutter. (Long hold-ups count too: the time
+  // a tab was hidden doesn't, as lastTime starts afresh when it comes back.)
+  {
+    const gap = now - lastTime;
+    if (recentGaps.length >= 8 && gap > 1.5 * usualGap()) counts.late++;
+    recentGaps.push(gap);
+    if (recentGaps.length > 31) recentGaps.shift();
+  }
   lastTime = now;
 
   sounds.enabled = settings.sound;
   renderer.measureGpu = infoShown();
 
-  scroller.rate = settings.speed;   // the scrolling text pauses and rewinds with the balls
+  // (Paused while the Twist is full screen: see twistOptions.onFullScreen.)
+  const speed = twistFull ? 0 : settings.speed;
+  scroller.rate = speed;   // the scrolling text pauses and rewinds with the balls
   // Say so on screen while time runs backwards ("<< REWIND", see index.html).
   if ((settings.speed < 0) !== showingRewind) {
     showingRewind = settings.speed < 0;
@@ -1273,18 +1316,18 @@ function frame(now) {
   // motion when it is overrun, are in physics-host.js.)
   // Its time budget: most of a frame at this screen's rate (it works side by
   // side with the drawing); overrun, the balls go into slow motion.
-  physics.step(elapsed * settings.speed, settings.gravity, (0.8 * 1000) / Math.max(screenRate, 30));
+  physics.step(elapsed * speed, settings.gravity, (0.8 * 1000) / Math.max(screenRate, 30));
   // ...and show the next finished one. None ready while the balls move: the
   // same picture of them twice, a stutter (see physics-client.js).
   // And a shown step that moves the balls further than one frame's worth
   // (steps that piled up, or time saved up while the physics was busy)
   // makes them leap ahead: a jump.
   const started = physics.started;   // (waiting for the very first step is no stutter)
-  if (!physics.showNext() && settings.speed !== 0 && started) counts.repeats++;
-  if (settings.speed !== 0) counts.jumps += physics.jumps;   // (see physics-client.js)
+  if (!physics.showNext() && speed !== 0 && started) counts.repeats++;
+  if (speed !== 0) counts.jumps += physics.jumps;   // (see physics-client.js)
   physics.jumps = 0;
 
-  if (settings.speed !== 0 || camera.changed || needsRedraw) {
+  if (speed !== 0 || camera.changed || needsRedraw) {
     start = performance.now();
     renderer.draw(camera, physics.balls, {
       hdrStrength: settings.hdrStrength,

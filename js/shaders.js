@@ -145,11 +145,19 @@ void main() {
 vec2 unitsPerPixel = fwidth(vGrid);
 vec2 nearestLine = floor(vGrid + 0.5);
 vec2 toLine = abs((vGrid - nearestLine) / unitsPerPixel + 0.03);
-float keepX = nearestLine.x >= uHalfSize ? uDrawEdge.x : nearestLine.x <= -uHalfSize ? uDrawEdge.y : 1.0;
-float keepY = nearestLine.y >= uHalfSize ? uDrawEdge.z : nearestLine.y <= -uHalfSize ? uDrawEdge.w : 1.0;
-float coverage = max(lineCoverage(toLine.x) * keepX, lineCoverage(toLine.y) * keepY);
-vec2 pastEdge = (abs(vGrid) - uHalfSize) / unitsPerPixel;
-coverage *= lineCoverage(max(pastEdge.x, pastEdge.y));
+const float EDGE_UNITS = 0.05;
+vec2 pastEdge = (abs(vGrid) - uHalfSize) / min(unitsPerPixel, vec2(EDGE_UNITS));
+vec2 packed = uLineWidth * unitsPerPixel;
+vec2 fade = 1.0 - smoothstep(0.25, 0.6, packed);
+vec2 inner = 1.0 - step(uHalfSize, abs(nearestLine));
+vec2 ends = vec2(smoothEdge(-pastEdge.y), smoothEdge(-pastEdge.x));
+float innerAlongY = lineCoverage(toLine.x) * inner.x * fade.x * ends.x;
+float innerAlongX = lineCoverage(toLine.y) * inner.y * fade.y * ends.y;
+vec2 toEdge = abs(abs(vGrid) - uHalfSize) / unitsPerPixel;
+vec2 drawsEdge = vec2(vGrid.x > 0.0 ? uDrawEdge.x : uDrawEdge.y, vGrid.y > 0.0 ? uDrawEdge.z : uDrawEdge.w);
+float edgeAlongY = lineCoverage(toEdge.x) * drawsEdge.x * lineCoverage(pastEdge.x) * ends.x;
+float edgeAlongX = lineCoverage(toEdge.y) * drawsEdge.y * lineCoverage(pastEdge.y) * ends.y;
+float coverage = max(max(innerAlongY, innerAlongX), max(edgeAlongY, edgeAlongX));
 vec4 pastCatch = vec4(vGrid.x - uHalfSize - uExtend.x, -vGrid.x - uHalfSize - uExtend.y,
 vGrid.y - uHalfSize - uExtend.z, -vGrid.y - uHalfSize - uExtend.w) / unitsPerPixel.xxyy;
 vec4 inside = step(pastCatch, vec4(0.1));
@@ -351,7 +359,7 @@ void main() {
 vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
 gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
 }
-`,m=`#version 300 es
+`,g=`#version 300 es
 precision highp float;
 uniform highp sampler2D uScene;
 uniform float uColorLevels;
@@ -384,4 +392,4 @@ color = mix(color * SDR_SHARE, SDR_SHARE + (1.0 - SDR_SHARE) * above, vec3(great
 }
 outColor = vec4(color, 1.0);
 }
-`;export{d as BALL_DEPTH_FRAGMENT_SHADER,u as BALL_FRAGMENT_SHADER,s as BALL_VERTEX_SHADER,h as COPPER_FRAGMENT_SHADER,l as FLOOR_FRAGMENT_SHADER,r as FLOOR_VERTEX_SHADER,i as MAX_BALLS,m as PRESENT_FRAGMENT_SHADER,p as PRESENT_VERTEX_SHADER,t as SHADOW_GRID,a as SHADOW_LIST_WIDTH,f as TRAIL_FRAGMENT_SHADER,v as TRAIL_VERTEX_SHADER,c as WALL_FRAGMENT_SHADER,n as WALL_VERTEX_SHADER};
+`;export{d as BALL_DEPTH_FRAGMENT_SHADER,u as BALL_FRAGMENT_SHADER,s as BALL_VERTEX_SHADER,h as COPPER_FRAGMENT_SHADER,l as FLOOR_FRAGMENT_SHADER,r as FLOOR_VERTEX_SHADER,i as MAX_BALLS,g as PRESENT_FRAGMENT_SHADER,p as PRESENT_VERTEX_SHADER,t as SHADOW_GRID,a as SHADOW_LIST_WIDTH,f as TRAIL_FRAGMENT_SHADER,v as TRAIL_VERTEX_SHADER,c as WALL_FRAGMENT_SHADER,n as WALL_VERTEX_SHADER};

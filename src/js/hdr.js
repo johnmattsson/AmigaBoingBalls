@@ -8,7 +8,11 @@
 // WebGPU canvas of 16-bit floats with toneMapping "extended" may go above
 // white, as far as the screen allows.
 //
-// The scene itself is still drawn with WebGL. Its last step packs the light
+// The main scene is drawn straight into such a canvas by the WebGPU renderer
+// (gpu-renderer.js). What follows is the older way, still used by the Twist
+// window, and for the main scene should the WebGPU renderer fail:
+//
+// The scene is drawn with WebGL. Its last step packs the light
 // into the WebGL canvas's 8 bits (see PRESENT_FRAGMENT_SHADER in shaders.js):
 // 0 … 0.8 holds the usual screen colours up to white, 0.8 … 1 the light from
 // white up to HDR_RANGE times white. This file copies that canvas into

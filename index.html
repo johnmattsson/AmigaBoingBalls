@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="The 1984 Amiga Boing Ball demo, rebuilt for the web: exact, reversible physics for up to 1000 spinning balls, the original sounds, copper bars, a scroller, a twister, and HDR.">
 <link rel="preload" href="static/amiga.woff2" as="font" type="font/woff2" crossorigin>
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://coffeevortex.net/">
+<meta property="og:title" content="Amiga Boing Balls">
+<meta property="og:description" content="The 1984 Amiga Boing Ball demo, rebuilt for the web: exact, reversible physics for up to 1000 spinning balls, the original sounds, copper bars, a scroller, a twister, and HDR.">
+<meta property="og:image" content="https://johnmattsson.github.io/AmigaBoingBalls/static/preview.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Four checkered Boing Balls, red, green, blue and yellow, bouncing in a purple grid box on a grey background, as in the 1984 Amiga demo">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/png" sizes="16x16" href="static/favicon-16.png">
 <link rel="icon" type="image/png" sizes="32x32" href="static/favicon-32.png">
 <link rel="icon" type="image/png" sizes="48x48" href="static/favicon-48.png">
@@ -19,6 +28,6 @@
 <div class="app-frame"></div>
 <div id="rewind">&lt;&lt; REWIND</div>
 <div id="info">Amiga Boing Balls Release 2.04 by <a href="mailto:john [dot] mattsson@gmail.com">John Preuß Mattsson</a></div>
-<script>const VERSION="2.04-111",scripts=["main","physics","precise","rewindcheck","renderer","shaders","camera","math","audio","gui","twist","music","scroller","presets","hdr","precise-wasm","physics-client","physics-host"],imports={};for(const e of scripts)imports[`./js/${e}.js`]=`./js/${e}.js?v=${VERSION}`;const importMap=document.createElement("script");importMap.type="importmap",importMap.textContent=JSON.stringify({imports}),document.currentScript.after(importMap);let last=importMap;for(const e of scripts){const t=document.createElement("link");t.rel="modulepreload",t.href=imports[`./js/${e}.js`],last.after(t),last=t}const main=document.createElement("script");main.type="module",main.src=`js/main.js?v=${VERSION}`,last.after(main);const tell=e=>{if(window.boing)return;const t=document.getElementById("info");t.style.display="",t.textContent=e};main.onerror=()=>tell("Sorry, the demo's scripts could not be loaded. Please reload the page."),addEventListener("error",e=>tell(`Sorry, the demo could not start: ${e.message}`)),addEventListener("unhandledrejection",e=>tell(`Sorry, the demo could not start: ${e.reason?.message??e.reason}`)),setTimeout(()=>tell("Still starting\u2026 (if nothing happens, please reload the page)"),1e4);</script>
+<script>const VERSION="2.04-119",scripts=["main","physics","precise","rewindcheck","renderer","shaders","camera","math","audio","gui","twist","music","scroller","presets","hdr","gpu-renderer","precise-wasm","physics-client","physics-host"],imports={};for(const e of scripts)imports[`./js/${e}.js`]=`./js/${e}.js?v=${VERSION}`;const importMap=document.createElement("script");importMap.type="importmap",importMap.textContent=JSON.stringify({imports}),document.currentScript.after(importMap);let last=importMap;for(const e of scripts){const t=document.createElement("link");t.rel="modulepreload",t.href=imports[`./js/${e}.js`],last.after(t),last=t}const main=document.createElement("script");main.type="module",main.src=`js/main.js?v=${VERSION}`,last.after(main);const tell=e=>{if(window.boing)return;const t=document.getElementById("info");t.dataset.credit??=t.innerHTML,t.style.display="",t.textContent=e};main.onerror=()=>tell("Sorry, the demo's scripts could not be loaded. Please reload the page."),addEventListener("error",e=>tell(`Sorry, the demo could not start: ${e.message}`)),addEventListener("unhandledrejection",e=>tell(`Sorry, the demo could not start: ${e.reason?.message??e.reason}`)),setTimeout(()=>tell("Still starting\u2026 (if nothing happens, please reload the page)"),1e4);</script>
 </body>
 </html>

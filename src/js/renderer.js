@@ -27,15 +27,15 @@ const MAX_SHADOW_RANGE = 3;   // the shadow grid covers at most ±3 sideways per
 
 // --- Look of the scene -------------------------------------------------------
 
-const BACKGROUND = hexToRgb(0xaaaaaa);   // light grey, same as the floor
-const GRID_COLOR = hexToRgb(0xaa00aa);   // purple
-const GRID_OPACITY = 0.6;                // 60 % purple, 40 % grey showing through
+export const BACKGROUND = hexToRgb(0xaaaaaa);   // light grey, same as the floor
+export const GRID_COLOR = hexToRgb(0xaa00aa);   // purple
+export const GRID_OPACITY = 0.6;                // 60 % purple, 40 % grey showing through
 const GRID_LINE_WIDTH = 1.5;             // in CSS pixels; try 1–2 to taste
 
 // The shade a grid line has where it fully covers a pixel. Release 1.3 drew
 // the lines 60 % see-through over the grey; we work out that resulting shade
 // once, so the lines look exactly as before.
-const GRID_SHADE = GRID_COLOR.map((c, i) => GRID_OPACITY * c + (1 - GRID_OPACITY) * BACKGROUND[i]);
+export const GRID_SHADE = GRID_COLOR.map((c, i) => GRID_OPACITY * c + (1 - GRID_OPACITY) * BACKGROUND[i]);
 
 // How many pixels every edge (ball outlines, checker squares, grid lines,
 // shadows) is blended over. 1 = as sharp as possible without stair-steps.
@@ -66,15 +66,15 @@ const FLOOR_LIMIT = 400;
 // The floor is drawn this far below the bottom of the box, so that it
 // never fights with the bottom grid over which is in front.
 const FLOOR_GAP = 0.01;
-const SHADOW_STRENGTH = 0.4;    // 40 % darker in full shadow
+export const SHADOW_STRENGTH = 0.4;    // 40 % darker in full shadow
 
 // Trails: the fading lines behind the balls.
 const TRAIL_WIDTH = 3;          // in CSS pixels
 const TRAIL_OPACITY = 0.9;      // at the ball; fades to 0 at the old end
 const MAX_TRAIL_PIECES = 400000; // most straight pieces drawn per frame (1000 balls × 400 fit)
 const FIRST_TRAIL_PIECES = 40960; // room made at the start; it grows when more is needed
-const BALL_TABLE_COLUMNS = 6;     // groups of 4 numbers per ball in the ball table
-const TRAIL_PIECE_NUMBERS = 11; // numbers sent per piece: 2 ends, colour, 2 fades
+export const BALL_TABLE_COLUMNS = 6;     // groups of 4 numbers per ball in the ball table
+export const TRAIL_PIECE_NUMBERS = 11; // numbers sent per piece: 2 ends, colour, 2 fades
 
 // Big pixels (renderer.pixelSize above 1): draw the scene the way an old
 // computer would have shown it — with far fewer pixels, blown up into big
@@ -127,106 +127,40 @@ export function maxLampTilt(stage) {
   return c >= 1 ? 0 : Math.floor((Math.acos(Math.max(-1, c)) * 180) / Math.PI);
 }
 
-export class Renderer {
-  // canvas: what to draw on. view: the element on the page that shows the
-  // scene, for its size and position — the canvas itself, or for HDR (see
-  // hdr.js) the page's canvas while this one draws on an OffscreenCanvas
-  // that is never shown, so that only WebGPU's canvas changes on screen.
-  // { inBackground: true }: compile the shaders in the background where the
-  // browser can (see whenReady), instead of making sure of them at once.
-  constructor(canvas, view = canvas, { inBackground = false } = {}) {
-    this.canvas = canvas;
+// What both renderers share: everything about the scene that is worked out
+// on the main processor each frame, before the graphics card is told to
+// draw — the lamp, the floor's size, the balls' drawing order, the ball
+// table, the shadow grid, which walls show, and the trails. This class
+// (WebGL2) and GpuRenderer in gpu-renderer.js (WebGPU, used for HDR) each
+// send it on and draw with it in their own way.
+export class SceneRenderer {
+  constructor(view) {
     this.view = view;
-
-    // antialias: false — the shaders smooth every edge themselves, so the
-    // graphics card's own (multi-sample) smoothing isn't needed.
-    // depth: false — the canvas itself needs no depth buffer; the off-screen
-    // picture has its own.
-    // (We leave the canvas see-through-capable, the default, even though every
-    // pixel we draw is fully opaque: in testing, an opaque-only canvas made
-    // Chrome show garbage where the settings panel overlaps the scene.)
-    const gl = canvas.getContext('webgl2', { antialias: false, depth: false });
-    if (!gl) throw new Error('WebGL2 is not available in this browser.');
-    this.gl = gl;
-    // The off-screen picture keeps light as 16-bit floating-point numbers
-    // where the graphics card can draw into those (almost everywhere), so
-    // it can hold light brighter than white (see createLinearTarget below).
-    this.floatTarget = !!gl.getExtension('EXT_color_buffer_float');
-    // An HDR screen, if switched on (see hdr.js): set by setHdr() in main.js.
+    // An HDR screen, if switched on (see hdr.js).
     this.hdr = null;
     this.wideColor = false;   // see setWideColor() (main.js switches it on)
-
-    // Compile the shader programs.
-    this.floorProgram = createProgram(gl, Shaders.FLOOR_VERTEX_SHADER, Shaders.FLOOR_FRAGMENT_SHADER);
-    this.wallProgram = createProgram(gl, Shaders.WALL_VERTEX_SHADER, Shaders.WALL_FRAGMENT_SHADER);
-    this.ballProgram = createProgram(gl, Shaders.BALL_VERTEX_SHADER, Shaders.BALL_FRAGMENT_SHADER);
-    this.ballDepthProgram = createProgram(gl, Shaders.BALL_VERTEX_SHADER, Shaders.BALL_DEPTH_FRAGMENT_SHADER);
-    this.trailProgram = createProgram(gl, Shaders.TRAIL_VERTEX_SHADER, Shaders.TRAIL_FRAGMENT_SHADER);
-    // The copper bars fill the whole picture, like the copy-to-screen step,
-    // so they share its vertex shader.
-    this.copperProgram = createProgram(gl, Shaders.PRESENT_VERTEX_SHADER, Shaders.COPPER_FRAGMENT_SHADER);
-    this.presentProgram = createProgram(gl, Shaders.PRESENT_VERTEX_SHADER, Shaders.PRESENT_FRAGMENT_SHADER);
-    this.programs = [this.floorProgram, this.wallProgram, this.ballProgram, this.ballDepthProgram,
-      this.trailProgram, this.copperProgram, this.presentProgram];
-    // Compile them in the background, where the browser can.
-    this.parallel = gl.getExtension('KHR_parallel_shader_compile');
-    // Usually: make sure of them now, so that a broken shader shows at once.
-    if (!inBackground) for (const program of this.programs) void program.uniforms;
-    // The scroller's picture, for its glowing letters with HDR (on texture unit 5).
-    this.textVersion = null;   // which of its pictures was sent last
-    this.textTexture = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE5);
-    gl.bindTexture(gl.TEXTURE_2D, this.textTexture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.activeTexture(gl.TEXTURE0);
-
-    // Upload the shapes. Walls and balls are both drawn as flat squares.
-    this.square = createSquare(gl);
-    this.emptyVao = gl.createVertexArray();   // for the copy-to-screen step
     this.walls = WALL_NORMALS.map(describeWall);
-    this.trails = createTrailMesh(gl);
     this.trailPieces = new Float32Array(FIRST_TRAIL_PIECES * TRAIL_PIECE_NUMBERS);
 
     // The ball table for the shaders (see BALL_LIST in shaders.js): one row
-    // of 6 × 4 numbers per ball, in a texture of 32-bit floating-point
-    // numbers on texture unit 3. Sent anew every frame.
+    // of 6 × 4 numbers per ball. Sent anew every frame.
     this.ballTable = new Float32Array(MAX_BALLS * BALL_TABLE_COLUMNS * 4);
-    this.ballTexture = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE3);
-    gl.bindTexture(gl.TEXTURE_2D, this.ballTexture);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, BALL_TABLE_COLUMNS, MAX_BALLS);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.activeTexture(gl.TEXTURE0);
     this.rotation = new Float32Array(9);
     this.drawOrder = new Int32Array(MAX_BALLS);       // ball numbers, farthest first
     this.drawDistance = new Float64Array(MAX_BALLS);  // (squared) distance of each ball from the eye
     this.drawCount = -1;
 
     // The shadow grid (see "Shadows" in shaders.js): for each of the
-    // 128 × 128 cells of the lamp's view, a list of the balls that can cast
+    // 192 × 192 cells of the lamp's view, a list of the balls that can cast
     // a shadow there. All the lists are kept one after another in
     // `shadowList`; for each cell, `shadowCells` holds where its list starts
-    // and how long it is. Both are sent to the GPU as textures of whole
-    // numbers: the cells on unit 1, the lists on unit 4.
+    // and how long it is.
     const cells = SHADOW_GRID * SHADOW_GRID;
     // (Both in one number per cell: start × 4096 + length, which halves what
     // has to be sent each frame. A list holds at most 1000 balls.)
     this.shadowCells = new Uint32Array(cells);
     this.shadowCount = new Uint32Array(cells);        // how many balls each cell lists
-    this.shadowCellTexture = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.shadowCellTexture);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R32UI, SHADOW_GRID, SHADOW_GRID);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.activeTexture(gl.TEXTURE0);
     this.shadowList = null;          // made (and made bigger) by makeShadowListRoom()
-    this.shadowListTexture = null;
-    this.makeShadowListRoom(64 * SHADOW_LIST_WIDTH);
 
     this.pixelRatio = 1;
     // How many screen points (CSS pixels) wide and high one drawn pixel is.
@@ -234,109 +168,41 @@ export class Renderer {
     // Call resize() after changing it.
     this.pixelSize = 1;
     this.pixelated = false;   // set by resize(): is pixelSize above 1?
-    this.target = null;   // the off-screen picture, made in resize()
 
     // Measuring how long the graphics card works on each frame (for the
-    // Info page). Only some browsers offer this (Chrome and Edge on
-    // desktop do); elsewhere gpuTimer is null and the time shows as "n/a".
-    // The card works in the background, so each measurement only becomes
-    // available a few frames later: unfinished ones wait in a queue.
-    this.gpuTimer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    // Info page): see the WebGL renderer. Elsewhere it shows as "n/a".
+    this.gpuTimer = null;
     this.measureGpu = false;   // switched on by main.js while the Info page is shown
-
-    this.gpuQueue = [];
     this.gpuTotalMs = 0;       // summed measurements, read and reset by main.js
     this.gpuFrames = 0;
   }
 
-  // Match the drawing size to the canvas's size on screen.
-  resize() {
-    const gl = this.gl;
-    // Normally: as many pixels as the screen has. With big pixels: fewer,
-    // and the browser is told to blow them up into crisp squares instead
-    // of blurring them.
-    // (A big pixel is made a whole number of the screen's own pixels wide —
-    // 3, not 2.5 — or some would come out wider than others.)
+  // How many pixels to draw, to match the view's size on screen.
+  // Normally: as many pixels as the screen has. With big pixels: fewer,
+  // and the browser is told to blow them up into crisp squares instead
+  // of blurring them.
+  // (A big pixel is made a whole number of the screen's own pixels wide —
+  // 3, not 2.5 — or some would come out wider than others.)
+  measure() {
     this.pixelated = this.pixelSize > 1;
     const screenRatio = window.devicePixelRatio || 1;
     const bigPixel = Math.max(1, Math.round(this.pixelSize * screenRatio)) / screenRatio;
     this.pixelRatio = this.pixelated ? 1 / bigPixel : Math.min(screenRatio, MAX_PIXEL_RATIO);
     this.view.style.imageRendering = this.pixelated ? 'pixelated' : '';
-    const width = Math.max(1, Math.round(this.view.clientWidth * this.pixelRatio));
-    const height = Math.max(1, Math.round(this.view.clientHeight * this.pixelRatio));
-    if (this.target && this.canvas.width === width && this.canvas.height === height) return;
-    this.canvas.width = width;
-    this.canvas.height = height;
-    if (this.target) this.target.dispose();
-    this.target = createLinearTarget(gl, width, height, this.floatTarget);
-    // (Should the card turn the float picture down after all, use 8 bits.)
-    if (!this.target.complete && this.floatTarget) {
-      this.target.dispose();
-      this.floatTarget = false;
-      this.target = createLinearTarget(gl, width, height, false);
-    }
+    return {
+      width: Math.max(1, Math.round(this.view.clientWidth * this.pixelRatio)),
+      height: Math.max(1, Math.round(this.view.clientHeight * this.pixelRatio)),
+    };
   }
 
-  // Resolves when every shader is compiled, so that drawing the first frame
-  // doesn't stop the page while they are (the HDR renderer: see setHdr in
-  // main.js). Where the browser can't compile in the background, at once.
-  async whenReady() {
-    while (!this.programs.every((program) => program.done(this.parallel))) {
-      await new Promise((resolve) => setTimeout(resolve, 16));
-    }
-    for (const program of this.programs) void program.uniforms;   // (now quick: and checks them)
-  }
-
-  // Give the graphics memory back (the HDR renderer, when HDR goes off).
-  dispose() {
-    this.hdr?.dispose();
-    this.hdr = null;
-    this.target?.dispose();
-    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
-  }
-
-  // Can the canvas show colours in the wider Display P3 range? (Most
-  // phones, Macs and newer laptops have such screens.)
-  get wideColorSupported() {
-    return 'drawingBufferColorSpace' in this.gl;
-  }
-
-  // Wide colour: the colours are sent to the screen as Display P3 instead
-  // of sRGB. The numbers stay the same, so grey stays grey, but on a
-  // wide-colour screen red, green, blue and yellow come out deeper than
-  // sRGB can show. (On an ordinary screen it looks as before.)
   setWideColor(on) {
     this.wideColor = on;
     this.applyColorSpace();
   }
 
-  applyColorSpace() {
-    // With an HDR screen the WebGPU canvas shows the picture, so the colour
-    // space is set there, and this canvas must stay plain sRGB.
-    const space = this.wideColor && !this.hdr ? 'display-p3' : 'srgb';
-    if (this.wideColorSupported && this.gl.drawingBufferColorSpace !== space) {
-      this.gl.drawingBufferColorSpace = space;
-    }
-    this.hdr?.setColorSpace(this.wideColor ? 'display-p3' : 'srgb');
-  }
-
-  // Draw one frame. `options` switches the extras on:
-  //   copper: true     – copper bars as the backdrop instead of plain grey
-  //   backdropTime     – the time (in seconds) that moves the copper bars
-  //   trailSeconds     – draw the balls' trails, this many seconds long (0 = none)
-  //   trailTime        – the physics' current time, for fading the trails
-  //   grid: false      – leave out the box's grid lines (and with them the
-  //                      walls: shadows then only fall on the floor)
-  //   shadows: false   – no shadows at all
-  //   stage            – where the floor and lamp are, if not as in
-  //                      BOX_STAGE above (any part may be left out)
-  //   hdrStrength      – how bright the light brighter than white gets
-  //   glints           – a glint where each ball mirrors the lamp: how
-  //                      bright (0 = none, 1 = white, more with HDR)
-  //   text             – the scroller's canvas, to draw into the scene
-  //                      with glowing letters (with HDR)
-  //   textVersion      – changes whenever that canvas has a new picture
-  draw(camera, balls, options = {}) {
+  // Everything about the frame that both renderers need (see draw() for
+  // the options). Also fills the ball table and the shadow grid.
+  prepare(camera, balls, options) {
     const showGrid = options.grid ?? true;
     const strength = options.hdrStrength ?? 1;   // of the light brighter than white
     const showShadows = options.shadows ?? true;
@@ -388,14 +254,6 @@ export class Renderer {
     }
     floorHalfSize *= 1.05;
     const wallShadowExtend = Math.max(0, floorHalfSize - BOX_HALF_SIZE);
-    const gl = this.gl;
-    const timer = this.measureGpu ? this.gpuTimer : null;
-    let query = null;
-    if (timer) {
-      this.collectGpuTimes();
-      query = gl.createQuery();
-      gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
-    }
     const count = Math.min(balls.length, MAX_BALLS);
     const eye = camera.position;
 
@@ -434,30 +292,11 @@ export class Renderer {
       table[at++] = order[i]; table[at++] = 0; table[at++] = 0; table[at++] = 0;
     }
 
-    // Send it to the graphics card (one upload for all shaders), only the
-    // rows that are in use.
-    gl.activeTexture(gl.TEXTURE3);
-    gl.bindTexture(gl.TEXTURE_2D, this.ballTexture);
-    if (count > 0) {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BALL_TABLE_COLUMNS, count, gl.RGBA, gl.FLOAT, table);
-    }
-    gl.activeTexture(gl.TEXTURE0);
-
-    // Work out which balls can cast shadows where, and send that too.
+    // Work out which balls can cast shadows where.
     // Without shadows the grid is simply left empty ("no ball can shadow
     // anything"), so every shadow test finishes at once.
     const listed = showShadows ? this.fillShadowGrid(balls, count, lamp) : this.emptyShadowGrid();
     shadowRange = this.shadowRange;
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.shadowCellTexture);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, SHADOW_GRID, SHADOW_GRID, gl.RED_INTEGER, gl.UNSIGNED_INT, this.shadowCells);
-    const rows = Math.ceil(listed / SHADOW_LIST_WIDTH);
-    if (rows > 0) {
-      gl.activeTexture(gl.TEXTURE4);
-      gl.bindTexture(gl.TEXTURE_2D, this.shadowListTexture);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, SHADOW_LIST_WIDTH, rows, gl.RED_INTEGER, gl.UNSIGNED_SHORT, this.shadowList);
-    }
-    gl.activeTexture(gl.TEXTURE0);
 
     // How shadows are painted on the floor and walls (see uShadowColor in
     // shaders.js). Plain backdrop: the grey's own shadowed shade, opaque.
@@ -472,237 +311,56 @@ export class Renderer {
     // walls seen from the inside are shown.
     const visible = this.walls.map((wall) => eye.dot(wall.normal) <= BOX_HALF_SIZE);
 
-    // Uniforms that every scene program needs: camera, balls, lamp, edges.
-    const setShared = (program) => {
-      gl.useProgram(program.handle);
-      const u = program.uniforms;
-      gl.uniformMatrix4fv(u.uViewProjection, false, camera.viewProjection);
-      gl.uniform3f(u.uCameraPosition, eye.x, eye.y, eye.z);
-      gl.uniform1i(u.uBallCount, count);
-      gl.uniform3f(u.uLightPosition, light.x, light.y, light.z);
-      gl.uniform3f(u.uLightForward, forward.x, forward.y, forward.z);
-      gl.uniform3f(u.uLightSide, side.x, side.y, side.z);
-      gl.uniform3f(u.uLightUp, up.x, up.y, up.z);
-      gl.uniform1f(u.uShadowRange, shadowRange);
-      gl.uniform1f(u.uShadowStrength, SHADOW_STRENGTH);
-      gl.uniform3f(u.uShadowColor, ...shadowColor);
-      gl.uniform1f(u.uShadowOpacity, shadowOpacity);
-      gl.uniform1f(u.uEdgeWidth, edgeWidth);
-      gl.uniform1i(u.uShadowCells, 1);  // the shadow grid is on texture units 1 and 4
-      gl.uniform1i(u.uShadowList, 4);
-      gl.uniform1i(u.uFrontDepth, 2);   // the front-depth picture is on unit 2
-      gl.uniform1i(u.uBallData, 3);     // the ball table is on unit 3
-      return u;
-    };
-
-    // ---- Step 1: the cheap first pass. Draw all balls, recording only how
-    // far away the nearest one is at each pixel (see "Skipping hidden pixels"
-    // in shaders.js). Everything farther away can then skip its work.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.target.frontFramebuffer);
-    gl.viewport(0, 0, this.target.width, this.target.height);
-    gl.clear(gl.DEPTH_BUFFER_BIT);   // "nothing in front" everywhere
-    gl.enable(gl.DEPTH_TEST);
-    setShared(this.ballDepthProgram);
-    gl.bindVertexArray(this.square.vao);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.target.frontDepth);
-    gl.activeTexture(gl.TEXTURE0);
-
     // Shadows fall on the four side walls and on the ceiling (which a lamp
     // tilted to the front can reach). The bottom of the box lies on the
     // floor, which shows them already. Wall 0 in the list is the bottom,
     // wall 1 the ceiling.
     const catchesShadows = (index) => index >= 1;
-    const placeWall = (u, wall, index) => {
+    const walls = this.walls.map((wall, index) => ({
+      wall,
+      shown: visible[index],
+      catchesShadows: showShadows && catchesShadows(index),
       // Shadows are caught on the wall, and a good way past each edge where
       // the next such wall is hidden. (At the bottom they reach the hair's
       // breadth down to where the floor is drawn, so that wall and floor
       // meet exactly.)
-      gl.uniform4f(u.uExtend, ...wall.neighbours.map((other) => {
+      extend: wall.neighbours.map((other) => {
         if (!catchesShadows(index)) return 0;
         if (other === 0) return FLOOR_GAP;
         return catchesShadows(other) && !visible[other] ? wallShadowExtend : 0;
-      }));
-      gl.uniform3f(u.uWallCenter, wall.center.x, wall.center.y, wall.center.z);
-      gl.uniform3f(u.uWallAxisU, wall.axisU.x, wall.axisU.y, wall.axisU.z);
-      gl.uniform3f(u.uWallAxisV, wall.axisV.x, wall.axisV.y, wall.axisV.z);
+      }),
+      // Each edge of the box is shared by two walls. If both walls drew
+      // the line along it, it would be blended twice and look darker than
+      // the other lines. So it is drawn by just one of them: the one that
+      // comes first in the list, unless the other wall is hidden.
+      drawEdge: wall.neighbours.map((other) => (!visible[other] || index < other ? 1 : 0)),
+    }));
+    // Walls 2…5 in the WALL_NORMALS list are left, right, back and front.
+    const wallShown = [2, 3, 4, 5].map((index) => (showGrid && visible[index] ? 1 : 0));
+
+    return {
+      showGrid, strength, showShadows, edgeWidth, floorY, light, forward, side, up,
+      floorHalfSize, count, eye, listed, shadowRange, shadowColor, shadowOpacity,
+      walls, wallShown,
+      glint: (options.glints ?? 0) * (this.hdr ? 1 + GLINT * strength : 1),
+      shine: this.hdr ? HDR_SHINE * strength : 0,
+      textGlow: TEXT_GLOW * strength,
+      lineWidth: Math.max(1, GRID_LINE_WIDTH * this.pixelRatio),   // never thinner than a pixel
+      trailWidth: Math.max(1, TRAIL_WIDTH * this.pixelRatio),
+      colorLevels: this.pixelated ? AMIGA_COLOR_LEVELS : 0,
     };
-
-    // ---- Step 2: draw the scene into the off-screen linear-light picture.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.target.framebuffer);
-    gl.viewport(0, 0, this.target.width, this.target.height);
-    // The picture stores linear light, so the clear colour must be linear too.
-    gl.clearColor(...BACKGROUND.map(srgbToLinear), 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);   // alpha = coverage
-
-    // --- 0. Backdrop: copper bars over the whole picture, if switched on.
-    if (options.copper) {
-      gl.disable(gl.DEPTH_TEST);   // it is behind everything
-      gl.useProgram(this.copperProgram.handle);
-      gl.uniform1f(this.copperProgram.uniforms.uTime, options.backdropTime ?? 0);
-      gl.uniform1f(this.copperProgram.uniforms.uHeight, this.target.height);
-      // On an HDR screen the bars' white highlights shine brighter than white.
-      gl.uniform1f(this.copperProgram.uniforms.uShine, this.hdr ? HDR_SHINE * strength : 0);
-      gl.bindVertexArray(this.emptyVao);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-    }
-
-    gl.enable(gl.DEPTH_TEST);   // nearer things hide farther things
-    gl.enable(gl.BLEND);        // shadows and smoothed edges blend over what's behind
-
-    // --- 1. Floor shadows (only from above; like the original, the floor
-    //     has no back side).
-    if (showShadows && eye.y > floorY) {
-      const u = setShared(this.floorProgram);
-      gl.uniform1f(u.uFloorY, floorY);
-      gl.uniform1f(u.uFloorHalfSize, floorHalfSize);
-      gl.uniform1f(u.uHalfSize, BOX_HALF_SIZE);
-      // Walls 2…5 in the WALL_NORMALS list are left, right, back and front.
-      gl.uniform4f(u.uWallShown, ...[2, 3, 4, 5].map((index) => (showGrid && visible[index] ? 1 : 0)));
-      gl.depthMask(false);
-      gl.bindVertexArray(this.square.vao);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      gl.depthMask(true);
-    }
-
-    // --- 2. Walls. They are always behind the balls (we hide the walls
-    //     between the camera and the box), so they go next. They don't
-    //     write depth, so they never hide each other.
-    if (showGrid) {
-      const u = setShared(this.wallProgram);
-      // Over plain grey the lines are drawn solid, in the shade that 60 %
-      // purple over that grey gives. Over the copper bars they really are
-      // 60 % see-through purple.
-      gl.uniform3f(u.uColor, ...(options.copper ? GRID_COLOR : GRID_SHADE));
-      gl.uniform1f(u.uLineOpacity, options.copper ? GRID_OPACITY : 1);
-      gl.uniform1f(u.uLineWidth, Math.max(1, GRID_LINE_WIDTH * this.pixelRatio));   // never thinner than a pixel
-      gl.uniform1f(u.uHalfSize, BOX_HALF_SIZE);
-      gl.depthMask(false);
-      gl.bindVertexArray(this.square.vao);
-
-      this.walls.forEach((wall, index) => {
-        if (!visible[index]) return;
-
-        gl.uniform1f(u.uCatchShadows, showShadows && catchesShadows(index) ? 1 : 0);
-        placeWall(u, wall, index);
-
-
-        // Each edge of the box is shared by two walls. If both walls drew
-        // the line along it, it would be blended twice and look darker than
-        // the other lines. So it is drawn by just one of them: the one that
-        // comes first in the list, unless the other wall is hidden.
-        const drawEdge = wall.neighbours.map((other) => (!visible[other] || index < other ? 1 : 0));
-        gl.uniform4f(u.uDrawEdge, ...drawEdge);
-
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      });
-
-      gl.depthMask(true);
-    }
-
-    // --- 3. Balls: one square each, all in a single instanced draw call,
-    //     farthest first. Their smoothed outlines blend over what's behind.
-    {
-      const u = setShared(this.ballProgram);
-      gl.uniform1f(u.uGlint, (options.glints ?? 0) * (this.hdr ? 1 + GLINT * strength : 1));
-      gl.bindVertexArray(this.square.vao);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
-    }
-
-    // --- 3b. Trails. Drawn last: the depth test hides the parts behind a
-    //     ball, and they don't write depth themselves.
-    if (options.trailSeconds > 0) {
-      const pieces = this.fillTrails(balls, count, options.trailTime ?? 0, options.trailSeconds);
-      if (pieces > 0) {
-        const u = this.trailProgram.uniforms;
-        gl.useProgram(this.trailProgram.handle);
-        gl.uniformMatrix4fv(u.uViewProjection, false, camera.viewProjection);
-        gl.uniform2f(u.uViewport, this.target.width, this.target.height);
-        gl.uniform1f(u.uWidth, Math.max(1, TRAIL_WIDTH * this.pixelRatio));
-        gl.uniform1f(u.uEdgeWidth, edgeWidth);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.trails.pieceBuffer);
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.trailPieces, 0, pieces * TRAIL_PIECE_NUMBERS);
-        gl.depthMask(false);
-        gl.bindVertexArray(this.trails.vao);
-        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, pieces);
-        gl.depthMask(true);
-      }
-    }
-
-    gl.disable(gl.BLEND);
-    gl.disable(gl.DEPTH_TEST);
-
-    // The glowing letters (HDR): the scroller's picture, and where it lies on the canvas
-    // (in the canvas's own pixels, counted from the bottom left).
-    let textRect = [0, 0, 0, 0];
-    if (options.text && options.text.width > 0) {
-      const box = this.view.getBoundingClientRect();
-      const strip = options.text.getBoundingClientRect();
-      const sx = this.canvas.width / box.width, sy = this.canvas.height / box.height;
-      textRect = [(strip.left - box.left) * sx, (box.bottom - strip.bottom) * sy, strip.width * sx, strip.height * sy];
-      // (Only a new picture is sent: sending it costs a pause every time.)
-      if (options.textVersion !== this.textVersion) {
-        this.textVersion = options.textVersion;
-        gl.activeTexture(gl.TEXTURE5);
-        gl.bindTexture(gl.TEXTURE_2D, this.textTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, options.text);
-        gl.activeTexture(gl.TEXTURE0);
-      }
-    } else {
-      this.textVersion = null;   // (shown again later: send it afresh)
-    }
-
-    // ---- Step 3: copy to the canvas, converting back to screen colours.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    gl.useProgram(this.presentProgram.handle);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.target.texture);
-    gl.uniform1i(this.presentProgram.uniforms.uScene, 0);
-    gl.uniform1f(this.presentProgram.uniforms.uColorLevels, this.pixelated ? AMIGA_COLOR_LEVELS : 0);
-    gl.uniform1f(this.presentProgram.uniforms.uHdrRange, this.hdr ? HDR_RANGE : 0);
-    gl.uniform1i(this.presentProgram.uniforms.uText, 5);
-    gl.uniform4f(this.presentProgram.uniforms.uTextRect, ...textRect);
-    gl.uniform1f(this.presentProgram.uniforms.uTextGlow, TEXT_GLOW * strength);
-    gl.bindVertexArray(this.emptyVao);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    // With an HDR screen, WebGPU takes the picture from here and shows it.
-    this.hdr?.present(this.canvas, this.view);
-
-    if (query) {
-      gl.endQuery(timer.TIME_ELAPSED_EXT);
-      this.gpuQueue.push(query);
-    }
   }
 
-  // Wait until the graphics card has really finished drawing. (Reading back
-  // one pixel of the picture forces that wait; gl.finish() is not reliable
-  // for this in every browser.)
-  waitUntilDone() {
-    const gl = this.gl;
-    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.onePixel ??= new Uint8Array(4));
+  // The glowing letters (HDR): where the scroller's picture lies on the
+  // canvas (in the canvas's own pixels, counted from the bottom left), or
+  // null when it isn't shown.
+  textRect(text, width, height) {
+    if (!text || text.width <= 0) return null;
+    const box = this.view.getBoundingClientRect();
+    const strip = text.getBoundingClientRect();
+    const sx = width / box.width, sy = height / box.height;
+    return [(strip.left - box.left) * sx, (box.bottom - strip.bottom) * sy, strip.width * sx, strip.height * sy];
   }
-
-  // Pick up the graphics card's finished time measurements.
-  collectGpuTimes() {
-    const gl = this.gl;
-    // "Disjoint" means something interrupted the card (e.g. power saving),
-    // which makes the waiting measurements unreliable: throw them away.
-    const disjoint = gl.getParameter(this.gpuTimer.GPU_DISJOINT_EXT);
-    while (this.gpuQueue.length) {
-      const query = this.gpuQueue[0];
-      if (!disjoint && !gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) break;
-      if (!disjoint) {
-        this.gpuTotalMs += gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6;   // ns → ms
-        this.gpuFrames++;
-      }
-      gl.deleteQuery(query);
-      this.gpuQueue.shift();
-    }
-  }
-
   // Turn the balls' remembered paths into a list of straight pieces for
   // the trail shader. Each piece: start (x, y, z), end (x, y, z), colour
   // (r, g, b), and how visible its start and its end are. Returns how many
@@ -719,9 +377,7 @@ export class Renderer {
       while (more < needed && more < MAX_TRAIL_PIECES) more *= 2;
       more = Math.min(more, MAX_TRAIL_PIECES);
       this.trailPieces = new Float32Array(more * TRAIL_PIECE_NUMBERS);
-      const gl = this.gl;
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.trails.pieceBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, this.trailPieces.byteLength, gl.DYNAMIC_DRAW);
+      this.trailRoomGrown();
     }
     const out = this.trailPieces;
     const most = out.length / TRAIL_PIECE_NUMBERS;
@@ -838,38 +494,441 @@ export class Renderer {
   }
 
   // Make sure the list of all cells' lists has room for `entries` ball
-  // numbers (in whole texture rows), making it bigger if not.
+  // numbers (in whole rows of SHADOW_LIST_WIDTH), making it bigger if not.
   makeShadowListRoom(entries) {
     const rows = Math.max(1, Math.ceil(entries / SHADOW_LIST_WIDTH));
     if (this.shadowList && this.shadowList.length >= rows * SHADOW_LIST_WIDTH) return;
-    const gl = this.gl;
     let size = this.shadowList ? this.shadowList.length / SHADOW_LIST_WIDTH : 64;
     while (size < rows) size *= 2;
     this.shadowList = new Uint16Array(size * SHADOW_LIST_WIDTH);
+    this.shadowListGrown(size);
+  }
+}
+
+export class Renderer extends SceneRenderer {
+  // canvas: what to draw on. view: the element on the page that shows the
+  // scene, for its size and position — the canvas itself, or for HDR (see
+  // hdr.js) the page's canvas while this one draws on an OffscreenCanvas
+  // that is never shown, so that only WebGPU's canvas changes on screen.
+  // { inBackground: true }: compile the shaders in the background where the
+  // browser can (see whenReady), instead of making sure of them at once.
+  constructor(canvas, view = canvas, { inBackground = false } = {}) {
+    super(view);
+    this.canvas = canvas;
+
+    // antialias: false — the shaders smooth every edge themselves, so the
+    // graphics card's own (multi-sample) smoothing isn't needed.
+    // depth: false — the canvas itself needs no depth buffer; the off-screen
+    // picture has its own.
+    // (We leave the canvas see-through-capable, the default, even though every
+    // pixel we draw is fully opaque: in testing, an opaque-only canvas made
+    // Chrome show garbage where the settings panel overlaps the scene.)
+    const gl = canvas.getContext('webgl2', { antialias: false, depth: false });
+    if (!gl) throw new Error('WebGL2 is not available in this browser.');
+    this.gl = gl;
+    // The off-screen picture keeps light as 16-bit floating-point numbers
+    // where the graphics card can draw into those (almost everywhere), so
+    // it can hold light brighter than white (see createLinearTarget below).
+    this.floatTarget = !!gl.getExtension('EXT_color_buffer_float');
+
+    // Compile the shader programs.
+    this.floorProgram = createProgram(gl, Shaders.FLOOR_VERTEX_SHADER, Shaders.FLOOR_FRAGMENT_SHADER);
+    this.wallProgram = createProgram(gl, Shaders.WALL_VERTEX_SHADER, Shaders.WALL_FRAGMENT_SHADER);
+    this.ballProgram = createProgram(gl, Shaders.BALL_VERTEX_SHADER, Shaders.BALL_FRAGMENT_SHADER);
+    this.ballDepthProgram = createProgram(gl, Shaders.BALL_VERTEX_SHADER, Shaders.BALL_DEPTH_FRAGMENT_SHADER);
+    this.trailProgram = createProgram(gl, Shaders.TRAIL_VERTEX_SHADER, Shaders.TRAIL_FRAGMENT_SHADER);
+    // The copper bars fill the whole picture, like the copy-to-screen step,
+    // so they share its vertex shader.
+    this.copperProgram = createProgram(gl, Shaders.PRESENT_VERTEX_SHADER, Shaders.COPPER_FRAGMENT_SHADER);
+    this.presentProgram = createProgram(gl, Shaders.PRESENT_VERTEX_SHADER, Shaders.PRESENT_FRAGMENT_SHADER);
+    this.programs = [this.floorProgram, this.wallProgram, this.ballProgram, this.ballDepthProgram,
+      this.trailProgram, this.copperProgram, this.presentProgram];
+    // Compile them in the background, where the browser can.
+    this.parallel = gl.getExtension('KHR_parallel_shader_compile');
+    // Usually: make sure of them now, so that a broken shader shows at once.
+    if (!inBackground) for (const program of this.programs) void program.uniforms;
+    // The scroller's picture, for its glowing letters with HDR (on texture unit 5).
+    this.textVersion = null;   // which of its pictures was sent last
+    this.textTexture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this.textTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.activeTexture(gl.TEXTURE0);
+
+    // Upload the shapes. Walls and balls are both drawn as flat squares.
+    this.square = createSquare(gl);
+    this.emptyVao = gl.createVertexArray();   // for the copy-to-screen step
+    this.trails = createTrailMesh(gl);
+
+    // The ball table (see SceneRenderer), in a texture of 32-bit
+    // floating-point numbers on texture unit 3.
+    this.ballTexture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.ballTexture);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, BALL_TABLE_COLUMNS, MAX_BALLS);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.activeTexture(gl.TEXTURE0);
+
+    // The shadow grid (see SceneRenderer), sent as textures of whole
+    // numbers: the cells on unit 1, the lists on unit 4.
+    this.shadowCellTexture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowCellTexture);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R32UI, SHADOW_GRID, SHADOW_GRID);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.activeTexture(gl.TEXTURE0);
+    this.shadowListTexture = null;
+    this.makeShadowListRoom(64 * SHADOW_LIST_WIDTH);
+    this.target = null;   // the off-screen picture, made in resize()
+
+    // Measuring how long the graphics card works on each frame (for the
+    // Info page). Only some browsers offer this (Chrome and Edge on
+    // desktop do); elsewhere gpuTimer is null and the time shows as "n/a".
+    // The card works in the background, so each measurement only becomes
+    // available a few frames later: unfinished ones wait in a queue.
+    this.gpuTimer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    this.gpuQueue = [];
+  }
+
+  // Match the drawing size to the canvas's size on screen.
+  resize() {
+    const gl = this.gl;
+    const { width, height } = this.measure();
+    if (this.target && this.canvas.width === width && this.canvas.height === height) return;
+    this.canvas.width = width;
+    this.canvas.height = height;
+    if (this.target) this.target.dispose();
+    this.target = createLinearTarget(gl, width, height, this.floatTarget);
+    // (Should the card turn the float picture down after all, use 8 bits.)
+    if (!this.target.complete && this.floatTarget) {
+      this.target.dispose();
+      this.floatTarget = false;
+      this.target = createLinearTarget(gl, width, height, false);
+    }
+  }
+
+  // Resolves when every shader is compiled, so that drawing the first frame
+  // doesn't stop the page while they are (the HDR renderer: see setHdr in
+  // main.js). Where the browser can't compile in the background, at once.
+  async whenReady() {
+    while (!this.programs.every((program) => program.done(this.parallel))) {
+      await new Promise((resolve) => setTimeout(resolve, 16));
+    }
+    for (const program of this.programs) void program.uniforms;   // (now quick: and checks them)
+  }
+
+  // Give the graphics memory back (the HDR renderer, when HDR goes off).
+  dispose() {
+    this.hdr?.dispose();
+    this.hdr = null;
+    this.target?.dispose();
+    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+
+  // Can the canvas show colours in the wider Display P3 range? (Most
+  // phones, Macs and newer laptops have such screens.)
+  get wideColorSupported() {
+    return 'drawingBufferColorSpace' in this.gl;
+  }
+
+  applyColorSpace() {
+    // With an HDR screen the WebGPU canvas shows the picture, so the colour
+    // space is set there, and this canvas must stay plain sRGB.
+    const space = this.wideColor && !this.hdr ? 'display-p3' : 'srgb';
+    if (this.wideColorSupported && this.gl.drawingBufferColorSpace !== space) {
+      this.gl.drawingBufferColorSpace = space;
+    }
+    this.hdr?.setColorSpace(this.wideColor ? 'display-p3' : 'srgb');
+  }
+
+  // Draw one frame. `options` switches the extras on:
+  //   copper: true     – copper bars as the backdrop instead of plain grey
+  //   backdropTime     – the time (in seconds) that moves the copper bars
+  //   trailSeconds     – draw the balls' trails, this many seconds long (0 = none)
+  //   trailTime        – the physics' current time, for fading the trails
+  //   grid: false      – leave out the box's grid lines (and with them the
+  //                      walls: shadows then only fall on the floor)
+  //   shadows: false   – no shadows at all
+  //   stage            – where the floor and lamp are, if not as in
+  //                      BOX_STAGE above (any part may be left out)
+  //   hdrStrength      – how bright the light brighter than white gets
+  //   glints           – a glint where each ball mirrors the lamp: how
+  //                      bright (0 = none, 1 = white, more with HDR)
+  //   text             – the scroller's canvas, to draw into the scene
+  //                      with glowing letters (with HDR)
+  //   textVersion      – changes whenever that canvas has a new picture
+  draw(camera, balls, options = {}) {
+    const frame = this.prepare(camera, balls, options);
+    const { count, eye, light, forward, side, up, edgeWidth, shadowColor, shadowOpacity } = frame;
+    const gl = this.gl;
+    const timer = this.measureGpu ? this.gpuTimer : null;
+    let query = null;
+    if (timer) {
+      this.collectGpuTimes();
+      query = gl.createQuery();
+      gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
+    }
+
+    // Send the ball table to the graphics card (one upload for all
+    // shaders), only the rows that are in use.
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.ballTexture);
+    if (count > 0) {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BALL_TABLE_COLUMNS, count, gl.RGBA, gl.FLOAT, this.ballTable);
+    }
+
+    // And the shadow grid.
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowCellTexture);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, SHADOW_GRID, SHADOW_GRID, gl.RED_INTEGER, gl.UNSIGNED_INT, this.shadowCells);
+    const rows = Math.ceil(frame.listed / SHADOW_LIST_WIDTH);
+    if (rows > 0) {
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_2D, this.shadowListTexture);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, SHADOW_LIST_WIDTH, rows, gl.RED_INTEGER, gl.UNSIGNED_SHORT, this.shadowList);
+    }
+    gl.activeTexture(gl.TEXTURE0);
+
+    // Uniforms that every scene program needs: camera, balls, lamp, edges.
+    const setShared = (program) => {
+      gl.useProgram(program.handle);
+      const u = program.uniforms;
+      gl.uniformMatrix4fv(u.uViewProjection, false, camera.viewProjection);
+      gl.uniform3f(u.uCameraPosition, eye.x, eye.y, eye.z);
+      gl.uniform1i(u.uBallCount, count);
+      gl.uniform3f(u.uLightPosition, light.x, light.y, light.z);
+      gl.uniform3f(u.uLightForward, forward.x, forward.y, forward.z);
+      gl.uniform3f(u.uLightSide, side.x, side.y, side.z);
+      gl.uniform3f(u.uLightUp, up.x, up.y, up.z);
+      gl.uniform1f(u.uShadowRange, frame.shadowRange);
+      gl.uniform1f(u.uShadowStrength, SHADOW_STRENGTH);
+      gl.uniform3f(u.uShadowColor, ...shadowColor);
+      gl.uniform1f(u.uShadowOpacity, shadowOpacity);
+      gl.uniform1f(u.uEdgeWidth, edgeWidth);
+      gl.uniform1i(u.uShadowCells, 1);  // the shadow grid is on texture units 1 and 4
+      gl.uniform1i(u.uShadowList, 4);
+      gl.uniform1i(u.uFrontDepth, 2);   // the front-depth picture is on unit 2
+      gl.uniform1i(u.uBallData, 3);     // the ball table is on unit 3
+      return u;
+    };
+
+    // ---- Step 1: the cheap first pass. Draw all balls, recording only how
+    // far away the nearest one is at each pixel (see "Skipping hidden pixels"
+    // in shaders.js). Everything farther away can then skip its work.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.target.frontFramebuffer);
+    gl.viewport(0, 0, this.target.width, this.target.height);
+    gl.clear(gl.DEPTH_BUFFER_BIT);   // "nothing in front" everywhere
+    gl.enable(gl.DEPTH_TEST);
+    setShared(this.ballDepthProgram);
+    gl.bindVertexArray(this.square.vao);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.target.frontDepth);
+    gl.activeTexture(gl.TEXTURE0);
+
+    const placeWall = (u, { wall, extend }) => {
+      gl.uniform4f(u.uExtend, ...extend);
+      gl.uniform3f(u.uWallCenter, wall.center.x, wall.center.y, wall.center.z);
+      gl.uniform3f(u.uWallAxisU, wall.axisU.x, wall.axisU.y, wall.axisU.z);
+      gl.uniform3f(u.uWallAxisV, wall.axisV.x, wall.axisV.y, wall.axisV.z);
+    };
+
+    // ---- Step 2: draw the scene into the off-screen linear-light picture.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.target.framebuffer);
+    gl.viewport(0, 0, this.target.width, this.target.height);
+    // The picture stores linear light, so the clear colour must be linear too.
+    gl.clearColor(...BACKGROUND.map(srgbToLinear), 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);   // alpha = coverage
+
+    // --- 0. Backdrop: copper bars over the whole picture, if switched on.
+    if (options.copper) {
+      gl.disable(gl.DEPTH_TEST);   // it is behind everything
+      gl.useProgram(this.copperProgram.handle);
+      gl.uniform1f(this.copperProgram.uniforms.uTime, options.backdropTime ?? 0);
+      gl.uniform1f(this.copperProgram.uniforms.uHeight, this.target.height);
+      // On an HDR screen the bars' white highlights shine brighter than white.
+      gl.uniform1f(this.copperProgram.uniforms.uShine, frame.shine);
+      gl.bindVertexArray(this.emptyVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    gl.enable(gl.DEPTH_TEST);   // nearer things hide farther things
+    gl.enable(gl.BLEND);        // shadows and smoothed edges blend over what's behind
+
+    // --- 1. Floor shadows (only from above; like the original, the floor
+    //     has no back side).
+    if (frame.showShadows && eye.y > frame.floorY) {
+      const u = setShared(this.floorProgram);
+      gl.uniform1f(u.uFloorY, frame.floorY);
+      gl.uniform1f(u.uFloorHalfSize, frame.floorHalfSize);
+      gl.uniform1f(u.uHalfSize, BOX_HALF_SIZE);
+      gl.uniform4f(u.uWallShown, ...frame.wallShown);
+      gl.depthMask(false);
+      gl.bindVertexArray(this.square.vao);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.depthMask(true);
+    }
+
+    // --- 2. Walls. They are always behind the balls (we hide the walls
+    //     between the camera and the box), so they go next. They don't
+    //     write depth, so they never hide each other.
+    if (frame.showGrid) {
+      const u = setShared(this.wallProgram);
+      // Over plain grey the lines are drawn solid, in the shade that 60 %
+      // purple over that grey gives. Over the copper bars they really are
+      // 60 % see-through purple.
+      gl.uniform3f(u.uColor, ...(options.copper ? GRID_COLOR : GRID_SHADE));
+      gl.uniform1f(u.uLineOpacity, options.copper ? GRID_OPACITY : 1);
+      gl.uniform1f(u.uLineWidth, frame.lineWidth);
+      gl.uniform1f(u.uHalfSize, BOX_HALF_SIZE);
+      gl.depthMask(false);
+      gl.bindVertexArray(this.square.vao);
+
+      for (const wall of frame.walls) {
+        if (!wall.shown) continue;
+        gl.uniform1f(u.uCatchShadows, wall.catchesShadows ? 1 : 0);
+        placeWall(u, wall);
+        gl.uniform4f(u.uDrawEdge, ...wall.drawEdge);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+
+      gl.depthMask(true);
+    }
+
+    // --- 3. Balls: one square each, all in a single instanced draw call,
+    //     farthest first. Their smoothed outlines blend over what's behind.
+    {
+      const u = setShared(this.ballProgram);
+      gl.uniform1f(u.uGlint, frame.glint);
+      gl.bindVertexArray(this.square.vao);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+    }
+
+    // --- 3b. Trails. Drawn last: the depth test hides the parts behind a
+    //     ball, and they don't write depth themselves.
+    if (options.trailSeconds > 0) {
+      const pieces = this.fillTrails(balls, count, options.trailTime ?? 0, options.trailSeconds);
+      if (pieces > 0) {
+        const u = this.trailProgram.uniforms;
+        gl.useProgram(this.trailProgram.handle);
+        gl.uniformMatrix4fv(u.uViewProjection, false, camera.viewProjection);
+        gl.uniform2f(u.uViewport, this.target.width, this.target.height);
+        gl.uniform1f(u.uWidth, frame.trailWidth);
+        gl.uniform1f(u.uEdgeWidth, edgeWidth);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.trails.pieceBuffer);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.trailPieces, 0, pieces * TRAIL_PIECE_NUMBERS);
+        gl.depthMask(false);
+        gl.bindVertexArray(this.trails.vao);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, pieces);
+        gl.depthMask(true);
+      }
+    }
+
+    gl.disable(gl.BLEND);
+    gl.disable(gl.DEPTH_TEST);
+
+    // The glowing letters (HDR): the scroller's picture, and where it lies.
+    const textRect = this.textRect(options.text, this.canvas.width, this.canvas.height) ?? [0, 0, 0, 0];
+    if (textRect[2] > 0) {
+      // (Only a new picture is sent: sending it costs a pause every time.)
+      if (options.textVersion !== this.textVersion) {
+        this.textVersion = options.textVersion;
+        gl.activeTexture(gl.TEXTURE5);
+        gl.bindTexture(gl.TEXTURE_2D, this.textTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, options.text);
+        gl.activeTexture(gl.TEXTURE0);
+      }
+    } else {
+      this.textVersion = null;   // (shown again later: send it afresh)
+    }
+
+    // ---- Step 3: copy to the canvas, converting back to screen colours.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.useProgram(this.presentProgram.handle);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.target.texture);
+    gl.uniform1i(this.presentProgram.uniforms.uScene, 0);
+    gl.uniform1f(this.presentProgram.uniforms.uColorLevels, frame.colorLevels);
+    gl.uniform1f(this.presentProgram.uniforms.uHdrRange, this.hdr ? HDR_RANGE : 0);
+    gl.uniform1i(this.presentProgram.uniforms.uText, 5);
+    gl.uniform4f(this.presentProgram.uniforms.uTextRect, ...textRect);
+    gl.uniform1f(this.presentProgram.uniforms.uTextGlow, frame.textGlow);
+    gl.bindVertexArray(this.emptyVao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    // With an HDR screen, WebGPU takes the picture from here and shows it.
+    this.hdr?.present(this.canvas, this.view);
+
+    if (query) {
+      gl.endQuery(timer.TIME_ELAPSED_EXT);
+      this.gpuQueue.push(query);
+    }
+  }
+
+  // Wait until the graphics card has really finished drawing. (Reading back
+  // one pixel of the picture forces that wait; gl.finish() is not reliable
+  // for this in every browser.)
+  waitUntilDone() {
+    const gl = this.gl;
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.onePixel ??= new Uint8Array(4));
+  }
+
+  // Pick up the graphics card's finished time measurements.
+  collectGpuTimes() {
+    const gl = this.gl;
+    // "Disjoint" means something interrupted the card (e.g. power saving),
+    // which makes the waiting measurements unreliable: throw them away.
+    const disjoint = gl.getParameter(this.gpuTimer.GPU_DISJOINT_EXT);
+    while (this.gpuQueue.length) {
+      const query = this.gpuQueue[0];
+      if (!disjoint && !gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) break;
+      if (!disjoint) {
+        this.gpuTotalMs += gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6;   // ns → ms
+        this.gpuFrames++;
+      }
+      gl.deleteQuery(query);
+      this.gpuQueue.shift();
+    }
+  }
+
+  // More room for the trails (see fillTrails): the graphics card's copy too.
+  trailRoomGrown() {
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.trails.pieceBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, this.trailPieces.byteLength, gl.DYNAMIC_DRAW);
+  }
+
+  // More room for the shadow lists (see makeShadowListRoom): a bigger texture.
+  shadowListGrown(rows) {
+    const gl = this.gl;
     if (this.shadowListTexture) gl.deleteTexture(this.shadowListTexture);
     this.shadowListTexture = gl.createTexture();
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this.shadowListTexture);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R16UI, SHADOW_LIST_WIDTH, size);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R16UI, SHADOW_LIST_WIDTH, rows);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.activeTexture(gl.TEXTURE0);
   }
-
 }
-
 
 // =============================================================================
 // Helpers for building shapes and shader programs.
 // =============================================================================
 
 // 0xRRGGBB → [r, g, b] with each part between 0 and 1.
-function hexToRgb(hex) {
+export function hexToRgb(hex) {
   return [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
 }
 
 // Screen colour (sRGB) → linear light. Same formula as toLinear() in shaders.js.
-function srgbToLinear(c) {
+export function srgbToLinear(c) {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
@@ -1017,7 +1076,7 @@ function createTrailMesh(gl) {
 }
 
 // Work out where a wall is and which two directions lie flat inside it.
-function describeWall(normal) {
+export function describeWall(normal) {
   // Any direction not parallel to the normal will do as a starting point.
   const helper = Math.abs(normal.y) > 0.5 ? new Vec3(1, 0, 0) : new Vec3(0, 1, 0);
   const axisU = helper.cross(normal).normalize();

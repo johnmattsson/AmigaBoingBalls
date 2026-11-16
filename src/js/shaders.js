@@ -389,16 +389,37 @@ export const WALL_FRAGMENT_SHADER = /* glsl */ `#version 300 es
     // both, and show up pale and twice as thick.)
     vec2 toLine = abs((vGrid - nearestLine) / unitsPerPixel + 0.03);
 
-    // Leave out the lines on edges that the neighbouring wall draws instead.
-    float keepX = nearestLine.x >= uHalfSize ? uDrawEdge.x : nearestLine.x <= -uHalfSize ? uDrawEdge.y : 1.0;
-    float keepY = nearestLine.y >= uHalfSize ? uDrawEdge.z : nearestLine.y <= -uHalfSize ? uDrawEdge.w : 1.0;
 
-    float coverage = max(lineCoverage(toLine.x) * keepX, lineCoverage(toLine.y) * keepY);
-
-    // Trim the extra margin: lines may stick out past the wall's edge by
-    // half their width (so the edge line is whole), but no further.
-    vec2 pastEdge = (abs(vGrid) - uHalfSize) / unitsPerPixel;
-    coverage *= lineCoverage(max(pastEdge.x, pastEdge.y));
+    // Trim the extra margin. A line may reach past the wall's edge at its
+    // sides by half its width (so the line along the edge is whole), but it
+    // stops exactly at its ends: else, where three walls meet in a corner,
+    // the ends of the edge lines would stick out of the box.
+    // (Measured with at most EDGE_UNITS box units to a pixel: on a wall seen
+    // almost edge-on, one pixel spans a long way across the wall, and half a
+    // line's width past the edge would become a long wedge past the corner.)
+    const float EDGE_UNITS = 0.05;
+    vec2 pastEdge = (abs(vGrid) - uHalfSize) / min(unitsPerPixel, vec2(EDGE_UNITS));   // in pixels
+    // A wall seen almost edge-on packs its lines so tight that they would
+    // run together into a solid band. Real fine lines would blur into the
+    // background there, so the inner lines fade out as the gap between them
+    // shrinks below a few line widths. (Not the lines along the box's
+    // edges: they outline the box.)
+    vec2 packed = uLineWidth * unitsPerPixel;   // line width ÷ gap between lines
+    vec2 fade = 1.0 - smoothstep(0.25, 0.6, packed);
+    vec2 inner = 1.0 - step(uHalfSize, abs(nearestLine));   // 0 where the nearest line is an edge line
+    vec2 ends = vec2(smoothEdge(-pastEdge.y), smoothEdge(-pastEdge.x));   // (lines stop at their ends)
+    float innerAlongY = lineCoverage(toLine.x) * inner.x * fade.x * ends.x;   // running along the wall's V
+    float innerAlongX = lineCoverage(toLine.y) * inner.y * fade.y * ends.y;   // running along its U
+    // The lines along the wall's own edges, measured to the edge itself (on a
+    // wall seen edge-on, the nearest line of a pixel may be an inner one, and
+    // the edge line would come out in pieces), where this wall draws them:
+    // the edges it shares with a neighbouring wall are drawn by just one of
+    // the two (see renderer.js), or the line would be blended twice.
+    vec2 toEdge = abs(abs(vGrid) - uHalfSize) / unitsPerPixel;
+    vec2 drawsEdge = vec2(vGrid.x > 0.0 ? uDrawEdge.x : uDrawEdge.y, vGrid.y > 0.0 ? uDrawEdge.z : uDrawEdge.w);
+    float edgeAlongY = lineCoverage(toEdge.x) * drawsEdge.x * lineCoverage(pastEdge.x) * ends.x;
+    float edgeAlongX = lineCoverage(toEdge.y) * drawsEdge.y * lineCoverage(pastEdge.y) * ends.y;
+    float coverage = max(max(innerAlongY, innerAlongX), max(edgeAlongY, edgeAlongX));
 
     // How much of this pixel lies on the part of the wall that catches
     // shadows (the wall itself plus uExtend). How far past each of the four

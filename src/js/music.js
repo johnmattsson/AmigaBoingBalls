@@ -209,7 +209,9 @@ export class Music {
   setPlaying(on) {
     if (on === this.playing) return;
     const context = this.sounds.context;
-    if (on && !context) return;   // no click yet, so no speakers: try again later
+    if (on && !context) return;   // (no speakers in this browser yet: try again after a click)
+    // (Before the first click the speakers are asleep: the tune is set going
+    // all the same, silently, and is heard as soon as a click wakes them.)
     this.playing = on;
 
     if (!on) {

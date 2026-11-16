@@ -55,11 +55,23 @@ function squeezeShaders(code) {
   });
 }
 
+// Every import between the scripts gets the version in its address too
+// (./physics.js → ./physics.js?v=2.04-113). The page's own imports already
+// get it from the import map in index.html, but the physics worker has no
+// import map: without this, a browser could, after an update, take a new
+// page with an old physics worker from its cache (GitHub Pages lets
+// browsers keep files for 10 minutes), and the two would not fit together.
+const html0 = await readFile(join(source, 'index.html'), 'utf8');
+const version = html0.match(/const VERSION = '([^']+)'/)?.[1];
+if (!version) throw new Error('No VERSION found in src/index.html');
+const versionImports = (code) => code.replace(/(\bfrom\s*|\bimport\s*\(?\s*)(["'])(\.\/[\w-]+\.js)\2/g,
+  (whole, before, quote, path) => `${before}${quote}${path}?v=${version}${quote}`);
+
 // The scripts.
 for (const name of (await readdir(join(source, 'js'))).filter((n) => n.endsWith('.js')).sort()) {
   const code = await readFile(join(source, 'js', name), 'utf8');
   const out = await transform(squeezeShaders(code), { loader: 'js', format: 'esm', minify: true, target: TARGET, legalComments: 'none' });
-  await writeFile(join(target, 'js', name), out.code);
+  await writeFile(join(target, 'js', name), versionImports(out.code));
   note(`js/${name}`, Buffer.byteLength(code), Buffer.byteLength(out.code));
 }
 

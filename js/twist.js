@@ -1,11 +1,11 @@
-import{showWindow as L}from"./gui.js";import{createHdrPresenter as F,HDR_RANGE as P}from"./hdr.js";const g={hdr:!1,glow:!0,strength:1,wide:!0},O=2.5,R=240,N=4*R*6,H=340,_=440,k=.5,z=.4,G=`
+import{showWindow as M}from"./gui.js?v=2.04-119";import{createHdrPresenter as W,HDR_RANGE as O}from"./hdr.js?v=2.04-119";const v={hdr:!1,glow:!0,strength:1,wide:!0,onFullScreen:null},q=2.5,x=240,U=4*x*6,k=340,N=440,V=.5,$=.4,K=`
 vec3 pack(vec3 light, float range) {
 vec3 color = toScreen(min(light, 1.0));
 if (range <= 0.0) return color;
 vec3 above = clamp((light - 1.0) / (range - 1.0), 0.0, 1.0);
 return mix(color * 0.8, 0.8 + 0.2 * above, vec3(greaterThan(light, vec3(1.0))));
 }
-`,B=`#version 300 es
+`,X=`#version 300 es
 precision highp float;
 uniform float uTime;
 uniform float uAspect;
@@ -17,7 +17,7 @@ out vec3 vNormal;
 out vec2 vPattern;
 flat out int vSide;
 const float PI = 3.14159265359;
-const float SLICES =${R}.0;
+const float SLICES =${x}.0;
 const float HALF_HEIGHT = 1.45;
 const float RADIUS = 0.46;
 float angleAt(float y) {
@@ -44,8 +44,8 @@ void main() {
 time = uTime - uDelay;
 int corner = gl_VertexID % 6;
 int piece = gl_VertexID / 6;
-int slice = piece %${R};
-vSide = piece /${R};
+int slice = piece %${x};
+vSide = piece /${x};
 bool right = corner == 1 || corner == 2 || corner == 4;
 bool top = corner == 2 || corner == 4 || corner == 5;
 float y = (float(slice + int(top)) / SLICES) * 2.0 - 1.0;
@@ -62,7 +62,7 @@ gl_Position = vec4(vPosition.x * ZOOM / uAspect + uShift * distance, vPosition.y
 (vPosition.z * -0.2) * distance,
 distance);
 }
-`,M=`#version 300 es
+`,Z=`#version 300 es
 precision highp float;
 in vec3 vPosition;
 in vec3 vNormal;
@@ -79,7 +79,7 @@ vec3(0.000, 0.529, 0.741),
 vec3(1.000, 0.827, 0.000));
 vec3 toLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
 vec3 toScreen(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
-${G}
+${K}
 float zigzag(float x) { return 2.0 * abs(fract(x * 0.5) - 0.5); }
 float squareWave(float x, float blur) {
 blur = max(blur, 1e-4);
@@ -100,12 +100,12 @@ float shine = pow(max(0.0, dot(normal, halfway)), 48.0);
 vec3 lit = toLinear(color) * (0.25 + 0.85 * facing) + vec3(0.45 + uGlow) * shine;
 outColor = vec4(pack(lit, uHdrRange), 1.0);
 }
-`,W=`#version 300 es
+`,Y=`#version 300 es
 void main() {
 vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
 gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
 }
-`,q=`#version 300 es
+`,j=`#version 300 es
 precision highp float;
 uniform float uHeight;
 uniform float uHdrRange;
@@ -116,6 +116,6 @@ vec3 color = mix(vec3(0.33, 0.40, 0.60), vec3(0.0, 0.0, 0.2), y);
 color = floor(color * 15.0 + 0.5) / 15.0;
 outColor = vec4(uHdrRange > 0.0 ? color * 0.8 : color, 1.0);
 }
-`;let x=!1;function $(){if(x)return;x=!0;const t=document.createElement("canvas");t.className="twist-canvas";const e=document.createElement("div");e.className="twist-frame",e.append(t);const n=I(t);if(!n){x=!1;return}let o=null,r=null,m=!1,i=!1;const h=()=>{o?.dispose(),r?.dispose(),o=r=null},p=()=>g.wide?"display-p3":"srgb",C=()=>{if(n.setColorSpace(p()),o?.setColorSpace(p()),g.hdr||(i=!1),!(g.hdr===!!o||m||i)){if(!g.hdr){h();return}m=!0,F(t,P,{onLost:()=>{h(),i=!0}}).then(({presenter:l})=>{if(m=!1,!l){i=!0;return}if(!S||!g.hdr){l.dispose();return}if(r=typeof OffscreenCanvas>"u"?null:I(new OffscreenCanvas(1,1)),!r){l.dispose(),i=!0;return}o=l,o.setColorSpace(p())})}},s=(l,A)=>{const T=Math.min(window.devicePixelRatio||1,2);t.style.width=`${l}px`,t.style.height=`${A}px`,t.width=Math.round(l*T),t.height=Math.round(A*T)};s(H,_);let S=!0;const D=performance.now();function y(l){if(!S)return;C();const A=(l-D)/1e3;if(o){const T=g.glow?O*g.strength:0;r.draw(A,t.width,t.height,P,T),o.present(r.surface,t)}else n.draw(A,t.width,t.height,0,0);requestAnimationFrame(y)}requestAnimationFrame(y);const a=()=>document.fullscreenElement??document.webkitFullscreenElement,u=!!(document.fullscreenEnabled||document.webkitFullscreenEnabled);let f=[H,_],c=null;const E=l=>{l?(c={parent:e.parentNode,next:e.nextSibling},document.body.append(e),e.classList.add("twist-cover"),s(innerWidth,innerHeight)):(c.parent.insertBefore(e,c.next),c=null,e.classList.remove("twist-cover"),s(...f))},w=()=>{if(c){E(!1);return}if(a()===e){(document.exitFullscreen??document.webkitExitFullscreen).call(document);return}if(f=[parseFloat(t.style.width),parseFloat(t.style.height)],a()){E(!0);return}(e.requestFullscreen??e.webkitRequestFullscreen).call(e)?.catch?.(()=>{})},v=()=>{if(c){a()||E(!1);return}a()===e?s(screen.width,screen.height):s(...f)},d=()=>{c&&s(innerWidth,innerHeight)};u&&(document.addEventListener("fullscreenchange",v),document.addEventListener("webkitfullscreenchange",v),addEventListener("resize",d),t.addEventListener("dblclick",w)),L("Twist v4",e,()=>{x=!1,S=!1,document.removeEventListener("fullscreenchange",v),document.removeEventListener("webkitfullscreenchange",v),removeEventListener("resize",d),c&&e.remove(),a()===e&&(document.exitFullscreen??document.webkitExitFullscreen).call(document),h(),n.dispose()},s,u?w:null)}function I(t){const e=t.getContext("webgl2",{antialias:!0});if(!e)return null;const n=b(e,B,M),o=b(e,W,q),r=(a,u)=>e.getUniformLocation(a,u),m=r(n,"uTime"),i=r(n,"uAspect"),h=r(n,"uShift"),p=r(n,"uDelay"),C=r(n,"uColorTurn"),s=r(n,"uGlow"),S=r(n,"uHdrRange"),D=r(o,"uHeight"),y=r(o,"uHdrRange");return e.bindVertexArray(e.createVertexArray()),{surface:t,setColorSpace(a){"drawingBufferColorSpace"in e&&e.drawingBufferColorSpace!==a&&(e.drawingBufferColorSpace=a)},draw(a,u,f,c,E){(t.width!==u||t.height!==f)&&(t.width=u,t.height=f),e.viewport(0,0,u,f),e.disable(e.DEPTH_TEST),e.useProgram(o),e.uniform1f(D,f),e.uniform1f(y,c),e.drawArrays(e.TRIANGLES,0,3),e.enable(e.DEPTH_TEST),e.clear(e.DEPTH_BUFFER_BIT),e.useProgram(n);const w=u/f;e.uniform1f(m,a),e.uniform1f(i,w),e.uniform1f(s,E),e.uniform1f(S,c);const v=Math.max(1,Math.floor(w/k));for(let d=0;d<v;d++)e.uniform1f(h,(d+.5)/v*2-1),e.uniform1f(p,d*z),e.uniform1i(C,d%4),e.drawArrays(e.TRIANGLES,0,N)},dispose(){e.getExtension("WEBGL_lose_context")?.loseContext()}}}function b(t,e,n){const o=t.createProgram();for(const[r,m]of[[t.VERTEX_SHADER,e],[t.FRAGMENT_SHADER,n]]){const i=t.createShader(r);if(t.shaderSource(i,m),t.compileShader(i),!t.getShaderParameter(i,t.COMPILE_STATUS))throw new Error(`Shader compile error:
-`+t.getShaderInfoLog(i));t.attachShader(o,i)}if(t.linkProgram(o),!t.getProgramParameter(o,t.LINK_STATUS))throw new Error(`Shader link error:
-`+t.getProgramInfoLog(o));return o}export{I as createDrawer,$ as openTwistWindow,g as twistOptions};
+`;let P=!1;function ee(){if(P)return;P=!0;const t=document.createElement("canvas");t.className="twist-canvas";const e=document.createElement("div");e.className="twist-frame",e.append(t);const i=z(t);if(!i){P=!1;return}let r=null,n=null,g=!1,a=!1;const p=()=>{r?.dispose(),n?.dispose(),r=n=null},S=()=>v.wide?"display-p3":"srgb",C=()=>{if(i.setColorSpace(S()),r?.setColorSpace(S()),v.hdr||(a=!1),!(v.hdr===!!r||g||a)){if(!v.hdr){p();return}g=!0,W(t,O,{onLost:()=>{p(),a=!0}}).then(({presenter:o})=>{if(g=!1,!o){a=!0;return}if(!w||!v.hdr){o.dispose();return}if(n=typeof OffscreenCanvas>"u"?null:z(new OffscreenCanvas(1,1)),!n){o.dispose(),a=!0;return}r=o,r.setColorSpace(S())})}},s=(o,E)=>{const R=Math.min(window.devicePixelRatio||1,2);t.style.width=`${o}px`,t.style.height=`${E}px`,t.width=Math.round(o*R),t.height=Math.round(E*R)};s(k,N);let w=!0;const D=performance.now();function A(o){if(!w)return;C();const E=(o-D)/1e3;if(r){const R=v.glow?q*v.strength:0;n.draw(E,t.width,t.height,O,R),r.present(n.surface,t)}else i.draw(E,t.width,t.height,0,0);requestAnimationFrame(A)}requestAnimationFrame(A);const l=()=>document.fullscreenElement??document.webkitFullscreenElement,u=!!(document.fullscreenEnabled||document.webkitFullscreenEnabled);let f=[k,N],c=null,y=!1;const d=o=>{o!==y&&(y=o,v.onFullScreen?.(o))};let h=null,m=0;const _=()=>e.closest(".window"),B=()=>{const o=_();h=o?{left:o.style.left,top:o.style.top}:null},b=()=>{const o=_();!o||!h||(o.style.left=h.left,o.style.top=h.top)},I=()=>{b(),m=performance.now()+1500},H=o=>{o?(c={parent:e.parentNode,next:e.nextSibling},document.body.append(e),e.classList.add("twist-cover"),s(innerWidth,innerHeight),d(!0)):(c.parent.insertBefore(e,c.next),c=null,e.classList.remove("twist-cover"),s(...f),I(),d(!1))},L=()=>{if(c){H(!1);return}if(l()===e){(document.exitFullscreen??document.webkitExitFullscreen).call(document);return}if(f=[parseFloat(t.style.width),parseFloat(t.style.height)],B(),l()){H(!0);return}(e.requestFullscreen??e.webkitRequestFullscreen).call(e)?.catch?.(()=>{})},T=()=>{if(c){l()||H(!1);return}l()===e?(s(screen.width,screen.height),d(!0)):(s(...f),I(),d(!1))},F=()=>{c?s(innerWidth,innerHeight):performance.now()<m&&b()};u&&(document.addEventListener("fullscreenchange",T),document.addEventListener("webkitfullscreenchange",T),addEventListener("resize",F),t.addEventListener("dblclick",L)),M("Twist v4",e,()=>{P=!1,w=!1,document.removeEventListener("fullscreenchange",T),document.removeEventListener("webkitfullscreenchange",T),removeEventListener("resize",F),c&&e.remove(),d(!1),l()===e&&(document.exitFullscreen??document.webkitExitFullscreen).call(document),p(),i.dispose()},s,u?L:null)}function z(t){const e=t.getContext("webgl2",{antialias:!0});if(!e)return null;const i=G(e,X,Z),r=G(e,Y,j),n=(l,u)=>e.getUniformLocation(l,u),g=n(i,"uTime"),a=n(i,"uAspect"),p=n(i,"uShift"),S=n(i,"uDelay"),C=n(i,"uColorTurn"),s=n(i,"uGlow"),w=n(i,"uHdrRange"),D=n(r,"uHeight"),A=n(r,"uHdrRange");return e.bindVertexArray(e.createVertexArray()),{surface:t,setColorSpace(l){"drawingBufferColorSpace"in e&&e.drawingBufferColorSpace!==l&&(e.drawingBufferColorSpace=l)},draw(l,u,f,c,y){(t.width!==u||t.height!==f)&&(t.width=u,t.height=f),e.viewport(0,0,u,f),e.disable(e.DEPTH_TEST),e.useProgram(r),e.uniform1f(D,f),e.uniform1f(A,c),e.drawArrays(e.TRIANGLES,0,3),e.enable(e.DEPTH_TEST),e.clear(e.DEPTH_BUFFER_BIT),e.useProgram(i);const d=u/f;e.uniform1f(g,l),e.uniform1f(a,d),e.uniform1f(s,y),e.uniform1f(w,c);const h=Math.max(1,Math.floor(d/V));for(let m=0;m<h;m++)e.uniform1f(p,(m+.5)/h*2-1),e.uniform1f(S,m*$),e.uniform1i(C,m%4),e.drawArrays(e.TRIANGLES,0,U)},dispose(){e.getExtension("WEBGL_lose_context")?.loseContext()}}}function G(t,e,i){const r=t.createProgram();for(const[n,g]of[[t.VERTEX_SHADER,e],[t.FRAGMENT_SHADER,i]]){const a=t.createShader(n);if(t.shaderSource(a,g),t.compileShader(a),!t.getShaderParameter(a,t.COMPILE_STATUS))throw new Error(`Shader compile error:
+`+t.getShaderInfoLog(a));t.attachShader(r,a)}if(t.linkProgram(r),!t.getProgramParameter(r,t.LINK_STATUS))throw new Error(`Shader link error:
+`+t.getProgramInfoLog(r));return r}export{z as createDrawer,ee as openTwistWindow,v as twistOptions};

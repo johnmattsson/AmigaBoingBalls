@@ -29,7 +29,9 @@ import { createHdrPresenter, HDR_RANGE } from './hdr.js';
 //   glow – with HDR, the shiny highlight gets brighter than white
 //   strength – how much brighter (the HDR setting)
 //   wide – wide colour (Display P3), as in the scene
-export const twistOptions = { hdr: false, glow: true, strength: 1, wide: true };
+//   onFullScreen(on) – called when the twist goes full screen and back
+//                      (main.js pauses the balls meanwhile)
+export const twistOptions = { hdr: false, glow: true, strength: 1, wide: true, onFullScreen: null };
 const GLOW = 2.5;   // extra highlight light with HDR
 
 const SLICES = 240;           // how many thin slices the bar is cut into
@@ -334,17 +336,47 @@ export function openTwistWindow() {
   // to the top of the page meanwhile, above every other window, and put back
   // afterwards; leaving the page's full screen ends it too.
   let covering = null;   // while covering: where the frame belongs in its window
+  let full = false;      // full screen (either way)?
+  const setFull = (on) => {
+    if (on === full) return;
+    full = on;
+    twistOptions.onFullScreen?.(on);
+  };
+  // Where the window was before full screen, to put it back exactly there
+  // afterwards. (Going in and out of full screen changes the size of the
+  // browser's window, in Safari several times over as it animates, and a
+  // smaller size in between makes the page pull its windows inside it. So
+  // the place is restored after each resize that follows, for a moment.)
+  let place = null, restoreUntil = 0;
+  const windowOf = () => frame.closest('.window');
+  const rememberPlace = () => {
+    const w = windowOf();
+    place = w ? { left: w.style.left, top: w.style.top } : null;
+  };
+  const restorePlace = () => {
+    const w = windowOf();
+    if (!w || !place) return;
+    w.style.left = place.left;
+    w.style.top = place.top;
+  };
+  const placeBack = () => {
+    restorePlace();
+    restoreUntil = performance.now() + 1500;
+  };
   const cover = (on) => {
     if (on) {
       covering = { parent: frame.parentNode, next: frame.nextSibling };
       document.body.append(frame);
       frame.classList.add('twist-cover');
       setSize(innerWidth, innerHeight);
+      setFull(true);
     } else {
       covering.parent.insertBefore(frame, covering.next);
       covering = null;
       frame.classList.remove('twist-cover');
       setSize(...windowSize);
+      placeBack();
+      setFull(false);
     }
   };
   const toggleFullScreen = () => {
@@ -354,15 +386,19 @@ export function openTwistWindow() {
       return;
     }
     windowSize = [parseFloat(canvas.style.width), parseFloat(canvas.style.height)];
+    rememberPlace();
     if (fullScreenElement()) { cover(true); return; }   // (the page is full screen already)
     (frame.requestFullscreen ?? frame.webkitRequestFullscreen).call(frame)?.catch?.(() => {});
   };
   const fullScreenChanged = () => {
     if (covering) { if (!fullScreenElement()) cover(false); return; }
-    if (fullScreenElement() === frame) setSize(screen.width, screen.height);
-    else setSize(...windowSize);
+    if (fullScreenElement() === frame) { setSize(screen.width, screen.height); setFull(true); }
+    else { setSize(...windowSize); placeBack(); setFull(false); }
   };
-  const coverResized = () => { if (covering) setSize(innerWidth, innerHeight); };
+  const coverResized = () => {
+    if (covering) setSize(innerWidth, innerHeight);
+    else if (performance.now() < restoreUntil) restorePlace();   // (after the page's own pull-back)
+  };
   if (canFullScreen) {
     document.addEventListener('fullscreenchange', fullScreenChanged);
     document.addEventListener('webkitfullscreenchange', fullScreenChanged);
@@ -378,6 +414,7 @@ export function openTwistWindow() {
     document.removeEventListener('webkitfullscreenchange', fullScreenChanged);
     removeEventListener('resize', coverResized);
     if (covering) frame.remove();
+    setFull(false);
     if (fullScreenElement() === frame) (document.exitFullscreen ?? document.webkitExitFullscreen).call(document);
     stopHdr();
     onPage.dispose();
