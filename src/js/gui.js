@@ -37,7 +37,13 @@ export class Panel {
     // and a Close button.
     const openButton = element('button', 'raised panel-open', 'Open Controls');
     const window = element('div', 'panel-window raised');
-    const title = element('div', 'panel-title', 'Controls');
+    // Its title bar, like every window's: a close gadget on the left, then
+    // the title.
+    const title = element('div', 'panel-title window-bar');
+    const closeGadget = element('button', 'window-close raised');
+    closeGadget.setAttribute('aria-label', 'Close');
+    closeGadget.title = 'Close';
+    title.append(closeGadget, element('span', '', 'Controls'));
     this.rows = element('div', 'panel-rows');
     this.pageOfRow = new Map();   // row → the page it belongs to (see addTabs)
     this.addingTo = null;         // the page that new rows are being added to
@@ -56,6 +62,7 @@ export class Panel {
     };
     openButton.addEventListener('click', () => setOpen(true));
     closeButton.addEventListener('click', () => setOpen(false));
+    closeGadget.addEventListener('click', () => setOpen(false));
   }
 
   // Pages. To keep the panel short, its rows can be spread over several

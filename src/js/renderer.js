@@ -132,7 +132,9 @@ export class Renderer {
   // scene, for its size and position — the canvas itself, or for HDR (see
   // hdr.js) the page's canvas while this one draws on an OffscreenCanvas
   // that is never shown, so that only WebGPU's canvas changes on screen.
-  constructor(canvas, view = canvas) {
+  // { inBackground: true }: compile the shaders in the background where the
+  // browser can (see whenReady), instead of making sure of them at once.
+  constructor(canvas, view = canvas, { inBackground = false } = {}) {
     this.canvas = canvas;
     this.view = view;
 
@@ -164,6 +166,12 @@ export class Renderer {
     // so they share its vertex shader.
     this.copperProgram = createProgram(gl, Shaders.PRESENT_VERTEX_SHADER, Shaders.COPPER_FRAGMENT_SHADER);
     this.presentProgram = createProgram(gl, Shaders.PRESENT_VERTEX_SHADER, Shaders.PRESENT_FRAGMENT_SHADER);
+    this.programs = [this.floorProgram, this.wallProgram, this.ballProgram, this.ballDepthProgram,
+      this.trailProgram, this.copperProgram, this.presentProgram];
+    // Compile them in the background, where the browser can.
+    this.parallel = gl.getExtension('KHR_parallel_shader_compile');
+    // Usually: make sure of them now, so that a broken shader shows at once.
+    if (!inBackground) for (const program of this.programs) void program.uniforms;
     // The scroller's picture, for its glowing letters with HDR (on texture unit 5).
     this.textVersion = null;   // which of its pictures was sent last
     this.textTexture = gl.createTexture();
@@ -267,6 +275,16 @@ export class Renderer {
       this.floatTarget = false;
       this.target = createLinearTarget(gl, width, height, false);
     }
+  }
+
+  // Resolves when every shader is compiled, so that drawing the first frame
+  // doesn't stop the page while they are (the HDR renderer: see setHdr in
+  // main.js). Where the browser can't compile in the background, at once.
+  async whenReady() {
+    while (!this.programs.every((program) => program.done(this.parallel))) {
+      await new Promise((resolve) => setTimeout(resolve, 16));
+    }
+    for (const program of this.programs) void program.uniforms;   // (now quick: and checks them)
   }
 
   // Give the graphics memory back (the HDR renderer, when HDR goes off).
@@ -912,32 +930,47 @@ function createLinearTarget(gl, width, height, float) {
 // Compile a vertex + fragment shader pair and link them into a program.
 // Also looks up where every uniform lives, so later we can simply write
 // program.uniforms.uColor instead of calling gl.getUniformLocation each time.
+//
+// The compiling may happen in the background (the browser's
+// KHR_parallel_shader_compile, see Renderer.whenReady): nothing here waits
+// for it. Only the first look at the program's uniforms — on its first use —
+// checks that it worked, waiting for it if it isn't done yet.
 function createProgram(gl, vertexSource, fragmentSource) {
-  const compile = (type, source) => {
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      throw new Error('Shader compile error:\n' + gl.getShaderInfoLog(shader));
-    }
-    return shader;
+  const shader = (type, source) => {
+    const it = gl.createShader(type);
+    gl.shaderSource(it, source);
+    gl.compileShader(it);
+    return it;
   };
-
+  const vertex = shader(gl.VERTEX_SHADER, vertexSource);
+  const fragment = shader(gl.FRAGMENT_SHADER, fragmentSource);
   const handle = gl.createProgram();
-  gl.attachShader(handle, compile(gl.VERTEX_SHADER, vertexSource));
-  gl.attachShader(handle, compile(gl.FRAGMENT_SHADER, fragmentSource));
+  gl.attachShader(handle, vertex);
+  gl.attachShader(handle, fragment);
   gl.linkProgram(handle);
-  if (!gl.getProgramParameter(handle, gl.LINK_STATUS)) {
-    throw new Error('Shader link error:\n' + gl.getProgramInfoLog(handle));
-  }
 
-  const uniforms = {};
-  const total = gl.getProgramParameter(handle, gl.ACTIVE_UNIFORMS);
-  for (let i = 0; i < total; i++) {
-    const name = gl.getActiveUniform(handle, i).name.replace(/\[0\]$/, '');  // "uBalls[0]" → "uBalls"
-    uniforms[name] = gl.getUniformLocation(handle, name);
-  }
-  return { handle, uniforms };
+  let uniforms = null;
+  const lookUp = () => {
+    if (!gl.getProgramParameter(handle, gl.LINK_STATUS)) {
+      for (const it of [vertex, fragment]) {
+        if (!gl.getShaderParameter(it, gl.COMPILE_STATUS)) throw new Error('Shader compile error:\n' + gl.getShaderInfoLog(it));
+      }
+      throw new Error('Shader link error:\n' + gl.getProgramInfoLog(handle));
+    }
+    const found = {};
+    const total = gl.getProgramParameter(handle, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < total; i++) {
+      const name = gl.getActiveUniform(handle, i).name.replace(/\[0\]$/, '');  // "uBalls[0]" → "uBalls"
+      found[name] = gl.getUniformLocation(handle, name);
+    }
+    return found;
+  };
+  return {
+    handle,
+    get uniforms() { return (uniforms ??= lookUp()); },
+    // Done compiling? (Without background compiling, always: it is done when asked.)
+    done(parallel) { return !parallel || gl.getProgramParameter(handle, parallel.COMPLETION_STATUS_KHR); },
+  };
 }
 
 // Put a list of numbers in a GPU buffer and tell WebGL that attribute

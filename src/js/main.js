@@ -100,8 +100,15 @@ const physics = new PhysicsClient(settings.balls, sizeMix(settings.sizes), {
   },
 });
 const sounds = new Sounds();
-sounds.load('bounce', `static/bounce1.ogg${version}`);
-sounds.load('click', `static/bounce2.ogg${version}`);
+// The sounds are fetched only once the page has loaded: no sound can play
+// before the first click or key press anyway (browsers don't allow it), so
+// they needn't hold up the start. (They are small, and ready long before.)
+function loadSounds() {
+  sounds.load('bounce', `static/bounce1.ogg${version}`);
+  sounds.load('click', `static/bounce2.ogg${version}`);
+}
+if (document.readyState === 'complete') setTimeout(loadSounds, 0);
+else addEventListener('load', () => setTimeout(loadSounds, 0), { once: true });
 
 // A boing whenever two balls hit each other, coming from the side of the
 // screen where they touch, and louder the harder they hit.
@@ -178,8 +185,11 @@ panel.addTabs(PAGES);
 
 // FPS: how many frames the demo actually drew last second. The bar is full at
 // your screen's refresh rate (the most a browser will ever draw). While
-// paused with nothing changing, nothing needs drawing, so it shows 0.
+// paused with nothing changing, nothing needs drawing, so it shows 0. On the
+// Info page, at its top.
+panel.startPage('Info');
 const fpsDisplay = panel.addSlider('FPS', settings, 'fps', { min: 0, max: 60, step: 1, readOnly: true });
+panel.startPage(null);
 
 // ---- Presets: ready-made scenes (see presets.js) ------------------------------
 // `keep`: settings to keep as they are instead (see restartPreset).
@@ -1149,10 +1159,15 @@ async function setHdr(on) {
     },
   });
   if (error) { twistOptions.hdr = false; return 'HDR not possible: ' + error + '.'; }
+  // (Its shaders are compiled in the background meanwhile, where the browser
+  // can: the page keeps drawing as before until they are ready, rather than
+  // stopping for a quarter of a second on the first HDR frame.)
   let hdrRenderer;
   try {
-    hdrRenderer = new Renderer(new OffscreenCanvas(1, 1), canvas);
+    hdrRenderer = new Renderer(new OffscreenCanvas(1, 1), canvas, { inBackground: true });
+    await hdrRenderer.whenReady();
   } catch (e) {
+    hdrRenderer?.dispose();
     presenter.dispose();
     twistOptions.hdr = false;
     return 'HDR not possible: ' + e.message;

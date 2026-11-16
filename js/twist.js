@@ -1,11 +1,11 @@
-import{showWindow as H}from"./gui.js";import{createHdrPresenter as I,HDR_RANGE as x}from"./hdr.js";const m={hdr:!1,glow:!0,strength:1,wide:!0},b=2.5,A=240,L=4*A*6,C=340,D=440,F=.5,O=.4,k=`
+import{showWindow as L}from"./gui.js";import{createHdrPresenter as F,HDR_RANGE as P}from"./hdr.js";const g={hdr:!1,glow:!0,strength:1,wide:!0},O=2.5,R=240,N=4*R*6,H=340,_=440,k=.5,z=.4,G=`
 vec3 pack(vec3 light, float range) {
 vec3 color = toScreen(min(light, 1.0));
 if (range <= 0.0) return color;
 vec3 above = clamp((light - 1.0) / (range - 1.0), 0.0, 1.0);
 return mix(color * 0.8, 0.8 + 0.2 * above, vec3(greaterThan(light, vec3(1.0))));
 }
-`,G=`#version 300 es
+`,B=`#version 300 es
 precision highp float;
 uniform float uTime;
 uniform float uAspect;
@@ -17,7 +17,7 @@ out vec3 vNormal;
 out vec2 vPattern;
 flat out int vSide;
 const float PI = 3.14159265359;
-const float SLICES =${A}.0;
+const float SLICES =${R}.0;
 const float HALF_HEIGHT = 1.45;
 const float RADIUS = 0.46;
 float angleAt(float y) {
@@ -44,8 +44,8 @@ void main() {
 time = uTime - uDelay;
 int corner = gl_VertexID % 6;
 int piece = gl_VertexID / 6;
-int slice = piece %${A};
-vSide = piece /${A};
+int slice = piece %${R};
+vSide = piece /${R};
 bool right = corner == 1 || corner == 2 || corner == 4;
 bool top = corner == 2 || corner == 4 || corner == 5;
 float y = (float(slice + int(top)) / SLICES) * 2.0 - 1.0;
@@ -62,7 +62,7 @@ gl_Position = vec4(vPosition.x * ZOOM / uAspect + uShift * distance, vPosition.y
 (vPosition.z * -0.2) * distance,
 distance);
 }
-`,N=`#version 300 es
+`,M=`#version 300 es
 precision highp float;
 in vec3 vPosition;
 in vec3 vNormal;
@@ -79,7 +79,7 @@ vec3(0.000, 0.529, 0.741),
 vec3(1.000, 0.827, 0.000));
 vec3 toLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
 vec3 toScreen(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
-${k}
+${G}
 float zigzag(float x) { return 2.0 * abs(fract(x * 0.5) - 0.5); }
 float squareWave(float x, float blur) {
 blur = max(blur, 1e-4);
@@ -100,12 +100,12 @@ float shine = pow(max(0.0, dot(normal, halfway)), 48.0);
 vec3 lit = toLinear(color) * (0.25 + 0.85 * facing) + vec3(0.45 + uGlow) * shine;
 outColor = vec4(pack(lit, uHdrRange), 1.0);
 }
-`,z=`#version 300 es
+`,W=`#version 300 es
 void main() {
 vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
 gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
 }
-`,B=`#version 300 es
+`,q=`#version 300 es
 precision highp float;
 uniform float uHeight;
 uniform float uHdrRange;
@@ -116,6 +116,6 @@ vec3 color = mix(vec3(0.33, 0.40, 0.60), vec3(0.0, 0.0, 0.2), y);
 color = floor(color * 15.0 + 0.5) / 15.0;
 outColor = vec4(uHdrRange > 0.0 ? color * 0.8 : color, 1.0);
 }
-`;let y=!1;function U(){if(y)return;y=!0;const t=document.createElement("canvas");t.className="twist-canvas";const e=document.createElement("div");e.className="twist-frame",e.append(t);const n=P(t);if(!n){y=!1;return}let o=null,r=null,d=!1,i=!1;const h=()=>{o?.dispose(),r?.dispose(),o=r=null},S=()=>m.wide?"display-p3":"srgb",T=()=>{if(n.setColorSpace(S()),o?.setColorSpace(S()),m.hdr||(i=!1),!(m.hdr===!!o||d||i)){if(!m.hdr){h();return}d=!0,I(t,x,{onLost:()=>{h(),i=!0}}).then(({presenter:a})=>{if(d=!1,!a){i=!0;return}if(!p||!m.hdr){a.dispose();return}if(r=typeof OffscreenCanvas>"u"?null:P(new OffscreenCanvas(1,1)),!r){a.dispose(),i=!0;return}o=a,o.setColorSpace(S())})}},v=(a,f)=>{const l=Math.min(window.devicePixelRatio||1,2);t.style.width=`${a}px`,t.style.height=`${f}px`,t.width=Math.round(a*l),t.height=Math.round(f*l)};v(C,D);let p=!0;const R=performance.now();function w(a){if(!p)return;T();const f=(a-R)/1e3;if(o){const l=m.glow?b*m.strength:0;r.draw(f,t.width,t.height,x,l),o.present(r.surface,t)}else n.draw(f,t.width,t.height,0,0);requestAnimationFrame(w)}requestAnimationFrame(w);const c=()=>document.fullscreenElement??document.webkitFullscreenElement,s=!!(document.fullscreenEnabled||document.webkitFullscreenEnabled);let u=[C,D];const E=()=>{if(c()===e){(document.exitFullscreen??document.webkitExitFullscreen).call(document);return}u=[parseFloat(t.style.width),parseFloat(t.style.height)],(e.requestFullscreen??e.webkitRequestFullscreen).call(e)?.catch?.(()=>{})},g=()=>{c()===e?v(screen.width,screen.height):v(...u)};s&&(document.addEventListener("fullscreenchange",g),document.addEventListener("webkitfullscreenchange",g),t.addEventListener("dblclick",E)),H("Twist v4",e,()=>{y=!1,p=!1,document.removeEventListener("fullscreenchange",g),document.removeEventListener("webkitfullscreenchange",g),c()===e&&(document.exitFullscreen??document.webkitExitFullscreen).call(document),h(),n.dispose()},v,s?E:null)}function P(t){const e=t.getContext("webgl2",{antialias:!0});if(!e)return null;const n=_(e,G,N),o=_(e,z,B),r=(c,s)=>e.getUniformLocation(c,s),d=r(n,"uTime"),i=r(n,"uAspect"),h=r(n,"uShift"),S=r(n,"uDelay"),T=r(n,"uColorTurn"),v=r(n,"uGlow"),p=r(n,"uHdrRange"),R=r(o,"uHeight"),w=r(o,"uHdrRange");return e.bindVertexArray(e.createVertexArray()),{surface:t,setColorSpace(c){"drawingBufferColorSpace"in e&&e.drawingBufferColorSpace!==c&&(e.drawingBufferColorSpace=c)},draw(c,s,u,E,g){(t.width!==s||t.height!==u)&&(t.width=s,t.height=u),e.viewport(0,0,s,u),e.disable(e.DEPTH_TEST),e.useProgram(o),e.uniform1f(R,u),e.uniform1f(w,E),e.drawArrays(e.TRIANGLES,0,3),e.enable(e.DEPTH_TEST),e.clear(e.DEPTH_BUFFER_BIT),e.useProgram(n);const a=s/u;e.uniform1f(d,c),e.uniform1f(i,a),e.uniform1f(v,g),e.uniform1f(p,E);const f=Math.max(1,Math.floor(a/F));for(let l=0;l<f;l++)e.uniform1f(h,(l+.5)/f*2-1),e.uniform1f(S,l*O),e.uniform1i(T,l%4),e.drawArrays(e.TRIANGLES,0,L)},dispose(){e.getExtension("WEBGL_lose_context")?.loseContext()}}}function _(t,e,n){const o=t.createProgram();for(const[r,d]of[[t.VERTEX_SHADER,e],[t.FRAGMENT_SHADER,n]]){const i=t.createShader(r);if(t.shaderSource(i,d),t.compileShader(i),!t.getShaderParameter(i,t.COMPILE_STATUS))throw new Error(`Shader compile error:
+`;let x=!1;function $(){if(x)return;x=!0;const t=document.createElement("canvas");t.className="twist-canvas";const e=document.createElement("div");e.className="twist-frame",e.append(t);const n=I(t);if(!n){x=!1;return}let o=null,r=null,m=!1,i=!1;const h=()=>{o?.dispose(),r?.dispose(),o=r=null},p=()=>g.wide?"display-p3":"srgb",C=()=>{if(n.setColorSpace(p()),o?.setColorSpace(p()),g.hdr||(i=!1),!(g.hdr===!!o||m||i)){if(!g.hdr){h();return}m=!0,F(t,P,{onLost:()=>{h(),i=!0}}).then(({presenter:l})=>{if(m=!1,!l){i=!0;return}if(!S||!g.hdr){l.dispose();return}if(r=typeof OffscreenCanvas>"u"?null:I(new OffscreenCanvas(1,1)),!r){l.dispose(),i=!0;return}o=l,o.setColorSpace(p())})}},s=(l,A)=>{const T=Math.min(window.devicePixelRatio||1,2);t.style.width=`${l}px`,t.style.height=`${A}px`,t.width=Math.round(l*T),t.height=Math.round(A*T)};s(H,_);let S=!0;const D=performance.now();function y(l){if(!S)return;C();const A=(l-D)/1e3;if(o){const T=g.glow?O*g.strength:0;r.draw(A,t.width,t.height,P,T),o.present(r.surface,t)}else n.draw(A,t.width,t.height,0,0);requestAnimationFrame(y)}requestAnimationFrame(y);const a=()=>document.fullscreenElement??document.webkitFullscreenElement,u=!!(document.fullscreenEnabled||document.webkitFullscreenEnabled);let f=[H,_],c=null;const E=l=>{l?(c={parent:e.parentNode,next:e.nextSibling},document.body.append(e),e.classList.add("twist-cover"),s(innerWidth,innerHeight)):(c.parent.insertBefore(e,c.next),c=null,e.classList.remove("twist-cover"),s(...f))},w=()=>{if(c){E(!1);return}if(a()===e){(document.exitFullscreen??document.webkitExitFullscreen).call(document);return}if(f=[parseFloat(t.style.width),parseFloat(t.style.height)],a()){E(!0);return}(e.requestFullscreen??e.webkitRequestFullscreen).call(e)?.catch?.(()=>{})},v=()=>{if(c){a()||E(!1);return}a()===e?s(screen.width,screen.height):s(...f)},d=()=>{c&&s(innerWidth,innerHeight)};u&&(document.addEventListener("fullscreenchange",v),document.addEventListener("webkitfullscreenchange",v),addEventListener("resize",d),t.addEventListener("dblclick",w)),L("Twist v4",e,()=>{x=!1,S=!1,document.removeEventListener("fullscreenchange",v),document.removeEventListener("webkitfullscreenchange",v),removeEventListener("resize",d),c&&e.remove(),a()===e&&(document.exitFullscreen??document.webkitExitFullscreen).call(document),h(),n.dispose()},s,u?w:null)}function I(t){const e=t.getContext("webgl2",{antialias:!0});if(!e)return null;const n=b(e,B,M),o=b(e,W,q),r=(a,u)=>e.getUniformLocation(a,u),m=r(n,"uTime"),i=r(n,"uAspect"),h=r(n,"uShift"),p=r(n,"uDelay"),C=r(n,"uColorTurn"),s=r(n,"uGlow"),S=r(n,"uHdrRange"),D=r(o,"uHeight"),y=r(o,"uHdrRange");return e.bindVertexArray(e.createVertexArray()),{surface:t,setColorSpace(a){"drawingBufferColorSpace"in e&&e.drawingBufferColorSpace!==a&&(e.drawingBufferColorSpace=a)},draw(a,u,f,c,E){(t.width!==u||t.height!==f)&&(t.width=u,t.height=f),e.viewport(0,0,u,f),e.disable(e.DEPTH_TEST),e.useProgram(o),e.uniform1f(D,f),e.uniform1f(y,c),e.drawArrays(e.TRIANGLES,0,3),e.enable(e.DEPTH_TEST),e.clear(e.DEPTH_BUFFER_BIT),e.useProgram(n);const w=u/f;e.uniform1f(m,a),e.uniform1f(i,w),e.uniform1f(s,E),e.uniform1f(S,c);const v=Math.max(1,Math.floor(w/k));for(let d=0;d<v;d++)e.uniform1f(h,(d+.5)/v*2-1),e.uniform1f(p,d*z),e.uniform1i(C,d%4),e.drawArrays(e.TRIANGLES,0,N)},dispose(){e.getExtension("WEBGL_lose_context")?.loseContext()}}}function b(t,e,n){const o=t.createProgram();for(const[r,m]of[[t.VERTEX_SHADER,e],[t.FRAGMENT_SHADER,n]]){const i=t.createShader(r);if(t.shaderSource(i,m),t.compileShader(i),!t.getShaderParameter(i,t.COMPILE_STATUS))throw new Error(`Shader compile error:
 `+t.getShaderInfoLog(i));t.attachShader(o,i)}if(t.linkProgram(o),!t.getProgramParameter(o,t.LINK_STATUS))throw new Error(`Shader link error:
-`+t.getProgramInfoLog(o));return o}export{P as createDrawer,U as openTwistWindow,m as twistOptions};
+`+t.getProgramInfoLog(o));return o}export{I as createDrawer,$ as openTwistWindow,g as twistOptions};

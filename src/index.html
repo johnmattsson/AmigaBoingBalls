@@ -183,6 +183,7 @@
        groove, and the current choice in the middle. */
     .panel button.cycle { flex: 1; width: auto; height: 17px; display: flex; align-items: center; }
     .panel button.cycle { min-width: 0; }   /* (may shrink below its text, which is then cut off) */
+    .panel .window-close { flex: none; width: 18px; height: 16px; }   /* (the close gadget keeps its own size) */
     .cycle-mark { width: 16px; line-height: 13px; font: bold 12px sans-serif; text-align: center;
                   border-right: 1px solid #000000; border-right: 1px solid color(display-p3 0 0 0); box-shadow: 1px 0 0 #ffffff; box-shadow: 1px 0 0 color(display-p3 1 1 1); }
     .cycle-text { flex: 1; text-align: center; white-space: nowrap; overflow: hidden; }
@@ -207,6 +208,8 @@
                           width: 4px; height: 3px; border: 1px solid #000000; border: 1px solid color(display-p3 0 0 0); background: #ffffff; background: color(display-p3 1 1 1); }
     .zoom-gadget:active { border-color: #000000 #ffffff #ffffff #000000; border-color: color(display-p3 0 0 0) color(display-p3 1 1 1) color(display-p3 1 1 1) color(display-p3 0 0 0); }
     .twist-frame:fullscreen { margin: 0; background: #000; background: color(display-p3 0 0 0); }   /* full screen: just the twist, no borders */
+    /* Covering the page (when the page itself is full screen, see twist.js). */
+    .twist-frame.twist-cover { position: fixed; inset: 0; margin: 0; z-index: 2147483000; background: #000; }
     /* Sizing gadget: bottom-right corner, with the Amiga's little two-box mark. */
     .window-size { position: absolute; right: 0; bottom: 0; width: 14px; height: 12px; touch-action: none;
                    border: solid; border-width: 1px 2px; border-color: #ffffff #000000 #000000 #ffffff; border-color: color(display-p3 1 1 1) color(display-p3 0 0 0) color(display-p3 0 0 0) color(display-p3 1 1 1);
@@ -316,7 +319,7 @@
        Note: scripts that import each other ("modules") don't load from
        file://, so open the page through a web server (see README). -->
   <script>
-    const VERSION = '2.04-107';
+    const VERSION = '2.04-111';
     const scripts = ['main', 'physics', 'precise', 'rewindcheck', 'renderer', 'shaders', 'camera', 'math', 'audio', 'gui', 'twist', 'music', 'scroller', 'presets', 'hdr', 'precise-wasm', 'physics-client', 'physics-host'];
 
     const imports = {};

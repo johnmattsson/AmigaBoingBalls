@@ -27,7 +27,7 @@ export class Sounds {
   constructor() {
     this.enabled = true;
     this.volume = 1;        // overall loudness of the boings, 0 … 1
-    this.context = null;    // the speaker connection, made on first interaction
+    this.context = null;    // the speaker connection (see connect below)
     this.output = null;     // where every sound goes: a limiter (see wake below)
     this.playing = 0;       // how many sounds are playing right now
     this.buffers = {};
@@ -36,7 +36,12 @@ export class Sounds {
     // never used for playing, only for decodeAudioData).
     this.decoder = new OfflineAudioContext(1, 1, 44100);
 
-    const wake = () => {
+    // The speaker connection is made at once, while the page loads: opening
+    // the computer's sound output can take a moment, which in the middle of
+    // the animation (on the first click) would hold up a frame. Browsers let
+    // it make no sound before the first click or key press, so it starts
+    // asleep; wake() wakes it then.
+    const connect = () => {
       if (!this.context) {
         this.context = new AudioContext();
         // A "compressor" works like an automatic volume knob: when several
@@ -51,7 +56,12 @@ export class Sounds {
         });
         this.output.connect(this.context.destination);
       }
-      this.context.resume();   // also wakes it if the computer slept
+    };
+    try { connect(); } catch { /* (some browsers only allow it after a click: then wake() makes it) */ }
+    const wake = () => {
+      connect();
+      // (Only if it sleeps: asleep at the start, or after the computer slept.)
+      if (this.context.state !== 'running') this.context.resume();
     };
     addEventListener('pointerdown', wake);
     addEventListener('keydown', wake);

@@ -327,21 +327,46 @@ export function openTwistWindow() {
   const fullScreenElement = () => document.fullscreenElement ?? document.webkitFullscreenElement;
   const canFullScreen = Boolean(document.fullscreenEnabled || document.webkitFullscreenEnabled);
   let windowSize = [WIDTH, HEIGHT];
+  //
+  // When the page itself is already full screen, the twist instead covers
+  // the whole page (which then is the whole screen): Safari doesn't let one
+  // part of a full-screen page go full screen by itself. Its frame is moved
+  // to the top of the page meanwhile, above every other window, and put back
+  // afterwards; leaving the page's full screen ends it too.
+  let covering = null;   // while covering: where the frame belongs in its window
+  const cover = (on) => {
+    if (on) {
+      covering = { parent: frame.parentNode, next: frame.nextSibling };
+      document.body.append(frame);
+      frame.classList.add('twist-cover');
+      setSize(innerWidth, innerHeight);
+    } else {
+      covering.parent.insertBefore(frame, covering.next);
+      covering = null;
+      frame.classList.remove('twist-cover');
+      setSize(...windowSize);
+    }
+  };
   const toggleFullScreen = () => {
+    if (covering) { cover(false); return; }
     if (fullScreenElement() === frame) {
       (document.exitFullscreen ?? document.webkitExitFullscreen).call(document);
       return;
     }
     windowSize = [parseFloat(canvas.style.width), parseFloat(canvas.style.height)];
+    if (fullScreenElement()) { cover(true); return; }   // (the page is full screen already)
     (frame.requestFullscreen ?? frame.webkitRequestFullscreen).call(frame)?.catch?.(() => {});
   };
   const fullScreenChanged = () => {
+    if (covering) { if (!fullScreenElement()) cover(false); return; }
     if (fullScreenElement() === frame) setSize(screen.width, screen.height);
     else setSize(...windowSize);
   };
+  const coverResized = () => { if (covering) setSize(innerWidth, innerHeight); };
   if (canFullScreen) {
     document.addEventListener('fullscreenchange', fullScreenChanged);
     document.addEventListener('webkitfullscreenchange', fullScreenChanged);
+    addEventListener('resize', coverResized);
     canvas.addEventListener('dblclick', toggleFullScreen);
   }
 
@@ -351,6 +376,8 @@ export function openTwistWindow() {
     running = false;
     document.removeEventListener('fullscreenchange', fullScreenChanged);
     document.removeEventListener('webkitfullscreenchange', fullScreenChanged);
+    removeEventListener('resize', coverResized);
+    if (covering) frame.remove();
     if (fullScreenElement() === frame) (document.exitFullscreen ?? document.webkitExitFullscreen).call(document);
     stopHdr();
     onPage.dispose();

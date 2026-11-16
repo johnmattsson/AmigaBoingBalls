@@ -40,7 +40,7 @@ const MESSAGE =
 
 const HEIGHT = 130;         // of the strip, in CSS pixels
 const SQUARE = 6;           // size of one square of a letter, in CSS pixels
-const SPEED = 180;          // how fast the text glides, in pixels per second
+const SPEED = 240;          // how fast the text glides, in pixels per second
 const WAVE_HEIGHT = 26;     // how far the text rides up and down
 const WAVE_LENGTH = 460;    // pixels from one wave crest to the next
 const STRIP = 2;            // width of the upright strips the text is drawn in

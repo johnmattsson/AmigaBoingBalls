@@ -46,7 +46,9 @@ export async function createHdrPresenter(view, range, { onLost } = {}) {
     pointerEvents: 'none',
   });
   const context = canvas.getContext('webgpu');
-  const presenter = new HdrPresenter(view, canvas, context, device, range);
+  const presenter = new HdrPresenter(view, canvas, context, device);
+  // (The pipeline is made in the background, so the page doesn't wait.)
+  await presenter.makePipeline(range);
   presenter.configure('srgb');
   // Did the browser accept "extended"? (Older ones ignore what they don't know.)
   const mode = context.getConfiguration?.()?.toneMapping?.mode;
@@ -54,8 +56,7 @@ export async function createHdrPresenter(view, range, { onLost } = {}) {
     device.destroy();
     return { error: 'this browser can\'t show HDR in a canvas (try Chrome 129 or later)' };
   }
-  view.before(canvas);
-  view.style.opacity = '0';
+  view.before(canvas);   // (the view is hidden at the first picture: see present)
   device.lost.then((info) => {
     if (!presenter.disposed) onLost?.(info.message);
   });
@@ -63,7 +64,7 @@ export async function createHdrPresenter(view, range, { onLost } = {}) {
 }
 
 class HdrPresenter {
-  constructor(view, canvas, context, device, range) {
+  constructor(view, canvas, context, device) {
     this.view = view;
     this.canvas = canvas;
     this.context = context;
@@ -72,8 +73,12 @@ class HdrPresenter {
     this.disposed = false;
     this.texture = null;   // the copy of the WebGL canvas, made in present()
 
-    const module = device.createShaderModule({ code: unpackShader(range) });
-    this.pipeline = device.createRenderPipeline({
+    this.pipeline = null;   // made by makePipeline
+  }
+
+  async makePipeline(range) {
+    const module = this.device.createShaderModule({ code: unpackShader(range) });
+    this.pipeline = await this.device.createRenderPipelineAsync({
       layout: 'auto',
       vertex: { module, entryPoint: 'vs' },
       fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
@@ -149,6 +154,9 @@ class HdrPresenter {
     pass.draw(3);
     pass.end();
     queue.submit([encoder.finish()]);
+    // The first picture is on its way: from now on this canvas shows the
+    // scene, and the page's own canvas (under the pointer) is invisible.
+    if (view.style.opacity !== '0') view.style.opacity = '0';
   }
 
   dispose() {
