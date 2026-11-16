@@ -1,0 +1,12 @@
+{
+  "name": "amiga-boing-balls",
+  "private": true,
+  "description": "Builds the minified copy of the demo in dist/ (see build/build.mjs). The demo itself needs no build.",
+  "type": "module",
+  "scripts": {
+    "build": "node build/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

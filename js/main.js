@@ -92,6 +92,12 @@ const version = new URL(import.meta.url).search;
 const physics = new PhysicsClient(settings.balls, sizeMix(settings.sizes), {
   version,
   onSnapshot: (snapshot, changed) => tookSnapshot(snapshot, changed),
+  // (Should the worker ever stop with an error, the physics carries on on
+  // the page: set the scene up again, and say so.)
+  onError: (message) => {
+    restartPreset();
+    showRequester('Physics', [`The physics stopped with an error (${message}) and was started again.`]);
+  },
 });
 const sounds = new Sounds();
 sounds.load('bounce', `static/bounce1.ogg${version}`);
@@ -803,26 +809,18 @@ const details = {
   // before, so one picture stayed on screen twice and the motion jerks.
   // (The FPS above can still say 60 then: it counts a whole second.)
   late: panel.addReadout('Late frames'),
-  // The shortest and the longest time between two frames during the last
-  // second. On a 60 Hz screen, even motion is about 16–17 ms every time;
-  // a wider spread is uneven motion, even without a late frame.
-  gaps: panel.addReadout('Frame gaps'),
-  // Frames in which the physics had no new step ready, so the balls stood
-  // still for a frame and then jumped, although the frame itself came on
-  // time. (In brackets: since the page was opened.)
-  repeats: panel.addReadout('Repeats'),
-  // Frames in which the balls leapt ahead by more than one frame's worth.
-  jumps: panel.addReadout('Jumps'),
 };
 // The late frames of the last two minutes, one bar a second, counted all the
 // time (also with the Controls closed), so any stutter shows up afterwards:
 // nothing at the bottom line means none; one late frame already makes a
 // clear spike, and the height grows (logarithmically) up to a whole second
 // of them.
-// The physics' repeats and jumps (see details) are drawn the same way, in
-// blue: both are frames in which the balls didn't move evenly.
+// In blue, the same way: frames in which the balls didn't move evenly
+// although the frame came on time — a repeat (the physics had no new step
+// ready, so the balls stood still for a frame) or a jump (they leapt ahead
+// by more than a frame's worth). See physics-client.js.
 let infoWasShown = false;
-let lateInAll = 0, repeatsInAll = 0, jumpsInAll = 0;   // since the page was opened
+let lateInAll = 0;   // since the page was opened
 const spike = (count) => (count === 0 ? 0 : 0.3 + 0.7 * Math.min(1, Math.log(count) / Math.log(60)));
 const lateGraph = addGraph(120, {
   lines: [{ color: '#0055aa', y: spike }, { color: '#c40233', y: spike }],
@@ -991,11 +989,9 @@ panel.addButton('About...', () => {
       'Below that: the time spent on physics and on drawing each ' +
       'frame, the highest frame rate your computer could manage, ball-on-ball hits per second, late frames ' +
       '(a picture shown twice, which makes the motion jerk, even when FPS says 60; in brackets, since the page ' +
-      'was opened), the shortest and longest time between two frames, and repeats (frames in which the physics ' +
-      'had no new step ready, so the balls stood still for a frame) and jumps (frames in which the balls leapt ' +
-      'ahead by more than one frame\'s worth). The first graph only records while ' +
-      'the Info page is shown; the graph below shows repeats and jumps (blue) and late frames (red) of the last two ' +
-      'minutes, recorded all the time. ' +
+      'was opened). The first graph only records while the Info page is shown; the graph below records all ' +
+      'the time, the last two minutes: late frames in red, and in blue frames in which the balls didn\'t move ' +
+      'evenly although the frame came on time (the physics had no new step ready, or showed two at once). ' +
       'The physics runs on a thread of its own, so a slow physics step never holds up the drawing, and the ' +
       'screen is kept from dimming while the demo runs.',
     ] },
@@ -1066,15 +1062,35 @@ document.querySelector('.app-bar .window-close').addEventListener('click', () =>
 // not dim or lock meanwhile. The browser lets go of the lock when the page
 // is hidden; it is asked for again when the page comes back. (Some browsers
 // only grant it after a click or a tap, so it is asked for then too.)
-let wakeLock = null;
+// While paused for more than a minute, the lock is let go (so a forgotten,
+// paused demo doesn't keep the screen on), and taken again when it runs.
+const PAUSED_AWAKE_SECONDS = 60;
+let wakeLock = null, pausedSince = null, letGo = false;
+function checkPausedAwake(now) {   // (once a second)
+  if (settings.speed !== 0) {
+    pausedSince = null;
+    if (letGo) { letGo = false; keepAwake(); }
+  } else {
+    pausedSince ??= now;
+    if (wakeLock && now - pausedSince > PAUSED_AWAKE_SECONDS * 1000) {
+      wakeLock.release().catch(() => {});
+      wakeLock = null;
+      letGo = true;
+    }
+  }
+}
+let asking = false;
 async function keepAwake() {
-  if (!navigator.wakeLock || document.hidden || wakeLock) return;
+  if (!navigator.wakeLock || document.hidden || wakeLock || asking) return;
+  if (letGo) return;   // (paused for long: see checkPausedAwake)
+  asking = true;
   try {
     wakeLock = await navigator.wakeLock.request('screen');
     wakeLock.addEventListener('release', () => { wakeLock = null; });
   } catch {
     // Not granted (low battery, say): the screen dims as usual.
   }
+  asking = false;
 }
 keepAwake();
 document.addEventListener('visibilitychange', keepAwake);
@@ -1140,7 +1156,8 @@ function showTextGlow() {
 let textVersion = 0;   // counts the scroller's pictures, so each is sent to the graphics card once
 scroller.onDraw = () => { textVersion++; if (textGlowShown()) needsRedraw = true; };
 
-window.boing = { physics, camera, settings, sounds, scroller, rewindCheck, applyRoom, showGrid, hdr: setHdr };   // (for trying things in the console)
+window.boing = { physics, camera, settings, sounds, scroller, rewindCheck, applyRoom, showGrid, hdr: setHdr,
+  tinker: (code) => physics.tinker(code) };   // (for trying things in the console)
 Object.defineProperty(window.boing, 'renderer', { get: () => renderer });   // (whichever draws now)
 
 // If the graphics driver resets (rare, e.g. after the computer sleeps),
@@ -1158,7 +1175,7 @@ canvas.addEventListener('webglcontextrestored', () => location.reload());
 let lastTime = performance.now();
 
 // Counted over one second, then shown and reset.
-const counts = { refreshes: 0, drawn: 0, steps: 0, physicsMs: 0, drawMs: 0, late: 0, repeats: 0, jumps: 0, shortest: Infinity, longest: 0, since: lastTime };
+const counts = { refreshes: 0, drawn: 0, steps: 0, physicsMs: 0, drawMs: 0, late: 0, repeats: 0, jumps: 0, since: lastTime };
 
 // The screen's refresh rate. The browser calls frame() once per refresh,
 // but only if the previous frame is done, so when the demo can't keep up it
@@ -1195,10 +1212,6 @@ function frame(now) {
   // (A late frame: see details.late. Longer gaps than 0.1 s are pauses,
   // such as a hidden tab, not stutter.)
   if (screenRate > 0 && elapsed < 0.1 && now - lastTime > 1500 / screenRate) counts.late++;
-  if (elapsed < 0.1) {
-    counts.shortest = Math.min(counts.shortest, now - lastTime);
-    counts.longest = Math.max(counts.longest, now - lastTime);
-  }
   lastTime = now;
 
   sounds.enabled = settings.sound;
@@ -1300,10 +1313,9 @@ requestFrame();
 
 // Once a second: update FPS and the performance rows on the Info page.
 function showCounts(now) {
+  checkPausedAwake(now);
   const seconds = (now - counts.since) / 1000;
   lateInAll += counts.late;
-  repeatsInAll += counts.repeats;
-  jumpsInAll += counts.jumps;
   lateGraph.sample(counts.repeats + counts.jumps, counts.late);   // (always, also while nobody looks)
   screenRate = Math.max(screenRate, Math.round(counts.refreshes / seconds));
   settings.fps = Math.round(counts.drawn / seconds);
@@ -1315,9 +1327,6 @@ function showCounts(now) {
     details.physics.set(`${physicsMs.toFixed(2)} ms`);
     details.hits.set(String(Math.round(hitsCounted / seconds)));
     details.late.set(`${Math.round(counts.late / seconds)}/s (${lateInAll})`);   // (in brackets: since the page was opened)
-    details.repeats.set(`${Math.round(counts.repeats / seconds)}/s (${repeatsInAll})`);
-    details.jumps.set(`${Math.round(counts.jumps / seconds)}/s (${jumpsInAll})`);
-    details.gaps.set(counts.longest > 0 ? `${Math.round(counts.shortest)}–${Math.round(counts.longest)} ms` : '–');
     lateGraph.draw();
 
     if (!counts.drawn) {
@@ -1333,13 +1342,15 @@ function showCounts(now) {
       // Measured by waiting for the card: close, but slightly pessimistic,
       // because the computer and the card then take turns instead of
       // working side by side. Hence the "≈".
-      details.graphics.set(`≈ ${drawMs.toFixed(2)} ms`);
-      details.maxFps.set(`≈ ${Math.round(1000 / cpuMs(physicsMs, drawMs))}`);
+      // (Not with HDR: then the wait is skipped, as it would make the motion
+      // jerky, so there is no measurement.)
+      details.graphics.set(renderer.hdr ? '–' : `≈ ${drawMs.toFixed(2)} ms`);
+      details.maxFps.set(renderer.hdr ? '–' : `≈ ${Math.round(1000 / cpuMs(physicsMs, drawMs))}`);
     }
   }
 
   renderer.gpuTotalMs = 0;
   renderer.gpuFrames = 0;
   hitsCounted = 0;
-  Object.assign(counts, { refreshes: 0, drawn: 0, steps: 0, physicsMs: 0, drawMs: 0, late: 0, repeats: 0, jumps: 0, shortest: Infinity, longest: 0, since: now });
+  Object.assign(counts, { refreshes: 0, drawn: 0, steps: 0, physicsMs: 0, drawMs: 0, late: 0, repeats: 0, jumps: 0, since: now });
 }

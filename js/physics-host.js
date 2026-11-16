@@ -17,6 +17,7 @@
 //                                           push (ball number, ray point, direction)
 //   { op: 'rewind', name, args }          – the rewind test: setEnabled,
 //                                           markChanged, noticeNewBalls
+//   { op: 'tinker', code }                – run code from the console with `physics`
 //   { op: 'step', seconds, gravity }      – move on; answered with a snapshot
 //
 // The snapshot holds what the page needs to draw and show: every ball's
@@ -89,7 +90,8 @@ export class PhysicsHost {
         break;
       case 'set': {
         let value = revive(message.value);
-        if (message.key === 'ballBounce' || message.key === 'wallBounce') value = COLLISION_TYPES[value];
+        // (A kind of bounce comes by name; one made up in the console as itself.)
+        if ((message.key === 'ballBounce' || message.key === 'wallBounce') && typeof value === 'string') value = COLLISION_TYPES[value];
         physics[message.key] = value;
         break;
       }
@@ -103,6 +105,9 @@ export class PhysicsHost {
         }
         break;
       }
+      case 'tinker':   // (from the console, see PhysicsClient.tinker)
+        try { new Function('physics', message.code)(physics); } catch (error) { console.error(error); }
+        break;
       case 'rewind':
         this.rewind[message.name](...(message.args ?? []));
         break;

@@ -3,7 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="static/favicon.png">
+  <meta name="description" content="The 1984 Amiga Boing Ball demo, rebuilt for the web: exact, reversible physics for up to 1000 spinning balls, the original sounds, copper bars, a scroller, a twister, and HDR.">
+  <!-- The Amiga font is fetched at once, rather than only when the page's
+       style asks for it, so the text appears sooner. -->
+  <link rel="preload" href="static/amiga.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- The tab icon, drawn for each size (see static/make-favicons.py), and
+       the icon for a phone's home screen. -->
+  <link rel="icon" type="image/png" sizes="16x16" href="static/favicon-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="static/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="48x48" href="static/favicon-48.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="static/favicon.png">
+  <link rel="apple-touch-icon" href="static/apple-touch-icon.png">
   <title>Amiga Boing Balls</title>
   <style>
     /* The Amiga's own Topaz-style font, and the classic mouse pointer. */
@@ -306,7 +316,7 @@
        Note: scripts that import each other ("modules") don't load from
        file://, so open the page through a web server (see README). -->
   <script>
-    const VERSION = '2.04-100';
+    const VERSION = '2.04-104';
     const scripts = ['main', 'physics', 'precise', 'rewindcheck', 'renderer', 'shaders', 'camera', 'math', 'audio', 'gui', 'twist', 'music', 'scroller', 'presets', 'hdr', 'precise-wasm', 'physics-client', 'physics-host'];
 
     const imports = {};
@@ -316,10 +326,22 @@
     importMap.textContent = JSON.stringify({ imports });
     document.currentScript.after(importMap);
 
+    // Tell the browser about all the scripts at once ("modulepreload"), so it
+    // fetches them side by side, instead of finding them one by one as each
+    // script imports the next (main.js → physics.js → precise.js → ...).
+    let last = importMap;
+    for (const name of scripts) {
+      const link = document.createElement('link');
+      link.rel = 'modulepreload';
+      link.href = imports[`./js/${name}.js`];
+      last.after(link);
+      last = link;
+    }
+
     const main = document.createElement('script');
     main.type = 'module';
     main.src = `js/main.js?v=${VERSION}`;
-    importMap.after(main);
+    last.after(main);
   </script>
 </body>
 </html>

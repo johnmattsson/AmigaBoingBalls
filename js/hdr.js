@@ -28,7 +28,7 @@
 // The packing: light up to HDR_RANGE times white fits in the canvas's 8 bits,
 // with SDR_SHARE of them for everything up to white (as in
 // PRESENT_FRAGMENT_SHADER in shaders.js and the Twist's shaders).
-export const HDR_RANGE = 8;   // (enough for the Strength setting at its highest)
+export const HDR_RANGE = 8;   // (enough for the HDR slider at its highest)
 const SDR_SHARE = 0.8;
 
 // Make a presenter that shows its pictures in place of `view` (a canvas on

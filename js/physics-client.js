@@ -63,8 +63,12 @@ class BallCopy {
 
 export class PhysicsClient {
   // onSnapshot(snapshot): called after every step's result has arrived.
-  constructor(ballCount, sizeMix, { onSnapshot, version = '' } = {}) {
+  // onError(message): the worker stopped with an error; the physics then
+  // starts afresh on the page itself (the scene must be set up again).
+  constructor(ballCount, sizeMix, { onSnapshot, onError, version = '' } = {}) {
     this.onSnapshot = onSnapshot;
+    this.onError = onError;
+    this.startWith = { ballCount, sizeMix };
     this.balls = [];
     this.time = 0;
     this.info = { motion: 0, total: 0, spin: 0, momentum: 0, angular: 0 };
@@ -94,8 +98,17 @@ export class PhysicsClient {
       worker.onmessage = (event) => this.receive(event.data);
       worker.onerror = (event) => {
         event.preventDefault?.();
-        if (!this.inWorker) this.runHere();
-        else console.error('The physics worker stopped:', event.message);
+        if (!this.inWorker) { this.runHere(); return; }
+        // It stopped while running: carry on without it, on the page.
+        console.error('The physics worker stopped:', event.message);
+        this.inWorker = false;
+        this.ready = [];
+        this.inFlight = 0;
+        this.primed = false;
+        this.waiting = [];
+        this.runHere();
+        this.send({ op: 'init', balls: this.startWith.ballCount, sizeMix: this.values.sizeMix });
+        this.onError?.(event.message);
       };
       this.worker = worker;
     } catch {
@@ -225,9 +238,14 @@ export class PhysicsClient {
   get trailSeconds() { return this.values.trailSeconds; }
   set trailSeconds(seconds) { this.set('trailSeconds', seconds); }
   get ballBounce() { return this.values.ballBounce; }
-  set ballBounce(type) { this.values.ballBounce = type; this.send({ op: 'set', key: 'ballBounce', value: nameOf(type) }); }
+  set ballBounce(type) { this.values.ballBounce = type; this.send({ op: 'set', key: 'ballBounce', value: nameOf(type) ?? { ...type } }); }
   get wallBounce() { return this.values.wallBounce; }
-  set wallBounce(type) { this.values.wallBounce = type; this.send({ op: 'set', key: 'wallBounce', value: nameOf(type) }); }
+  set wallBounce(type) { this.values.wallBounce = type; this.send({ op: 'set', key: 'wallBounce', value: nameOf(type) ?? { ...type } }); }
+
+  // For trying things in the browser's console: run `code` where the real
+  // physics is (in the worker), with `physics` being that Physics. E.g.
+  //   boing.tinker('physics.balls[0].velocity.y = 20; physics.changed()')
+  tinker(code) { this.send({ op: 'tinker', code }); }
   // No balls at all (before new ones are placed).
   clearBalls() { this.send({ op: 'set', key: 'balls', value: [] }); }
 

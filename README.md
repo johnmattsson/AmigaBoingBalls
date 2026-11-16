@@ -58,7 +58,7 @@ New:
 - A Boings on/off switch, and boings that are louder the harder the balls hit.
 - A Balls slider: anything from 1 to 1000 balls, and a Size mix slider to mix small and big balls (up to four times as big as the smallest). Bigger balls are heavier, so they shove small ones around.
 - An Energy slider: shows the balls' total energy (movement + spin + height, per ball; 1.0 = the classic start). It stays constant by itself, because nothing in the box loses energy; clicks add some. Drag it to calm the balls down or liven them up.
-- The Info page of the panel shows performance: physics and graphics time per frame, the highest frame rate the demo could reach, ball hits per second, late frames per second (frames that came more than 1.5 screen refreshes after the one before, so a picture stayed on screen twice; in brackets the count since the page was opened), and the shortest and longest time between two frames in the last second. Repeats counts frames in which the physics had no new step ready, so the balls stood still for a frame and then jumped although the frame came on time. Jumps counts frames in which the balls leapt ahead by more than one frame's worth (steps that piled up, or time saved up while the physics was busy). A graph under them shows all of them for the last two minutes (repeats and jumps in blue, late frames in red), recorded all the time, also with the Controls closed. FPS now shows the frames the demo actually draws.
+- The Info page of the panel shows performance: physics and graphics time per frame, the highest frame rate the demo could reach, ball hits per second, late frames per second (frames that came more than 1.5 screen refreshes after the one before, so a picture stayed on screen twice; in brackets the count since the page was opened), A graph under them shows the last two minutes: late frames in red, and in blue frames in which the balls didn't move evenly although the frame came on time (a repeat: the physics had no new step ready, so the balls stood still for a frame; or a jump: steps that piled up, or time saved up while the physics was busy, made them leap ahead), recorded all the time, also with the Controls closed. FPS now shows the frames the demo actually draws.
 - Many boings at once are kept clean: at most 8 play together, and an automatic limiter stops them from distorting.
 - On phones and tablets the settings panel is drawn larger, for fingers.
 - Saves battery: while paused, the scene is only redrawn when the camera moves. And while the page is hidden (another tab in front), everything stops: physics, drawing, boings and music.
@@ -100,6 +100,8 @@ The Controls panel (top right) sets the number and sizes of the balls, how they 
 | `js/physics-worker.js` | Starts `physics-host.js` on a thread of its own (a Web Worker) |
 | `js/physics-client.js` | The page's side of the physics: passes changes on, keeps a copy of the balls for drawing |
 | `js/hdr.js` | Showing the picture on an HDR screen with WebGPU |
+| `build/build.mjs`, `package.json` | Makes the minified copy for publishing, in `dist/` (see Publishing) |
+| `static/make-favicons.py` | Draws the tab icons (16, 32, 48 and 192 pixels) and the phone home-screen icon |
 | `wasm/precise.c`, `wasm/build.sh` | The source of `js/precise-wasm.js`, and the script that builds it |
 
 Every file starts with a plain-language explanation of what it does.
@@ -114,13 +116,13 @@ Every object that casts a shadow is a perfect sphere, so instead of a shadow map
 
 ### The physics on a thread of its own
 
-The physics and the rewind test run in a Web Worker (`js/physics-worker.js`), a thread of its own, so a slow physics step (1000 balls packed in a corner, computed with 64 digits) never holds up the drawing, the camera or the controls. The page keeps a copy of the balls as they were after the last step (`js/physics-client.js`): every frame it asks for the next step and shows one finished step, keeping one more finished step in hand. The balls are drawn two frames (1/30 s) behind the physics, always the same, and an answer that comes a little late (browsers can wake the worker's thread a moment later, especially after the tab was in the background) is simply the one in hand next time. Without that, the same picture of the balls would be shown twice and then jump: a stutter that no frame timing shows. The Info page counts such repeats (blue in the late-frame graph). Changes (a push, a preset, the sliders) are passed on as messages, and every step is answered with a snapshot: positions, orientations, the trails' new points (the page keeps the trails itself; sending them whole came to 13 MB a step with 1000 balls and 10-second trails, now about 90 kB), what was hit (for the boings) and the numbers on the Info page. Where a worker can't be started (the page opened as a file, or an old browser), the same code runs on the page itself, as before.
+The physics and the rewind test run in a Web Worker (`js/physics-worker.js`), a thread of its own, so a slow physics step (1000 balls packed in a corner, computed with 64 digits) never holds up the drawing, the camera or the controls. The page keeps a copy of the balls as they were after the last step (`js/physics-client.js`): every frame it asks for the next step and shows one finished step, keeping one more finished step in hand. The balls are drawn two frames (1/30 s) behind the physics, always the same, and an answer that comes a little late (browsers can wake the worker's thread a moment later, especially after the tab was in the background) is simply the one in hand next time. Without that, the same picture of the balls would be shown twice and then jump: a stutter that no frame timing shows. The Info page's late-frame graph shows such repeats in blue. Changes (a push, a preset, the sliders) are passed on as messages, and every step is answered with a snapshot: positions, orientations, the trails' new points (the page keeps the trails itself; sending them whole came to 13 MB a step with 1000 balls and 10-second trails, now about 90 kB), what was hit (for the boings) and the numbers on the Info page. Where a worker can't be started (the page opened as a file, or an old browser), the same code runs on the page itself, as before; and should the worker ever stop with an error, the physics starts again on the page, with the preset set up afresh.
 
 ### Tilt, and keeping the screen on
 
 On a phone or tablet, **Tilt** (Scene page) lets gravity pull the way the device is tilted, read from its motion sensor (the `deviceorientation` event; Safari on the iPhone asks for permission first). The direction is turned with the screen and with the camera, so "down" is always down in the room as you see it. Energy is still conserved while the direction stays the same; a turning gravity can't be undone by a rewind, so the rewind test says "lost (by hand)".
 
-While the demo is shown, the screen is kept from dimming or locking (the Screen Wake Lock API, where the browser has it).
+While the demo is shown, the screen is kept from dimming or locking (the Screen Wake Lock API, where the browser has it). After a minute of pause it is let go, so a forgotten, paused demo doesn't keep the screen on; it is taken again when the demo runs.
 
 ### Pushing balls in a crowd
 
@@ -166,10 +168,6 @@ Near the top of `js/renderer.js`:
 
 The copper bars' colours, number and speed are in `COPPER_FRAGMENT_SHADER` at the end of `js/shaders.js`. The twister's motion is the three lines of `angleAt()` near the top of `js/twist.js`.
 
-## Publishing a new version
-
-Before publishing changes (for example to GitHub Pages), change `VERSION` near the bottom of `index.html`: raise the build number after the dash (`2.04-12` → `2.04-13`). The release shown on the page stays 2.04. Browsers keep copies of files they have downloaded; the version number makes every visitor fetch the new set of files at once, instead of a mix of old and new.
-
 ## Running it locally
 
 The scripts are JavaScript modules, which browsers won't load straight from your disk (`file://`). Start any small web server in this folder, for example:
@@ -182,15 +180,30 @@ and open http://localhost:8000.
 
 Needs a browser with WebGL2 (every current desktop and mobile browser).
 
+## Publishing
+
+Before publishing changes (for example to GitHub Pages), change `VERSION` near the bottom of `index.html`: raise the build number after the dash (`2.04-12` → `2.04-13`). The release shown on the page stays 2.04. Browsers keep copies of files they have downloaded; the version number makes every visitor fetch the new set of files at once, instead of a mix of old and new.
+
+The demo needs no build: `index.html`, `js/` and `static/` run as they are, and are meant to be read. For a web site there is also a minified copy, with the comments and spaces taken out (about 410 kB of scripts and page down to 160 kB, before the server's own compression):
+
+```sh
+npm install      # once: fetches esbuild, the minifier
+npm run build    # makes dist/
+```
+
+Upload what is in `dist/`. (On GitHub Pages, which publishes a branch's root or its `docs/` folder, copy `dist/` to `docs/`, or publish it with a GitHub Actions workflow.) Each script is minified on its own rather than bundled, as the page loads them as separate modules with the version in their addresses; from the shaders only comments and indentation are taken out. See `build/build.mjs`.
+
+The page also helps the browser load quickly: it fetches the Amiga font at once (`preload`) and announces all its scripts up front (`modulepreload`), so they are fetched side by side instead of one after another as each imports the next.
+
 ## Tinkering
 
 While the demo runs, open the browser's developer console and try:
 
 ```js
 boing.settings.speed = 0.2                          // slow motion
-boing.physics.balls[0].velocity.y = 20; boing.physics.changed()            // launch the red ball
-boing.physics.balls.forEach(b => b.spin.y = 30); boing.physics.changed()   // spin everything fast
+boing.tinker('physics.balls[0].velocity.y = 20; physics.changed()')                         // launch the red ball
+boing.tinker('physics.balls.forEach(b => b.spin = b.spin.add({x: 0, y: 30, z: 0})); physics.changed()')   // spin everything fast
 boing.physics.wallBounce = { normal: 1, tangential: 1, angular: 1 }        // make the walls grippy too
 ```
 
-After changing balls from the console, call `boing.physics.changed()` so the physics re-plans its collisions straight away (it otherwise does so within a second).
+The physics runs in a worker, a thread of its own (see below), so `boing.physics.balls` are only the page's copies of the balls, for drawing. To change the real ones, `boing.tinker(code)` runs the code in the worker, where `physics` is the real Physics. After changing balls there, call `physics.changed()` so the physics re-plans its collisions straight away (it otherwise does so within a second).
