@@ -1,13 +1,15 @@
 // =============================================================================
-// build.mjs — makes the minified copy of the demo, in dist/.
+// build.mjs — makes the site: the minified copy of the demo.
 //
-// The demo needs no build: index.html, js/ and static/ run as they are, and
-// are meant to be read (every file starts with a plain-language explanation).
-// This makes a second copy for publishing, with the comments and spaces taken
-// out, which the browser loads faster. Run it with
+// The readable demo is in src/: index.html, js/ and static/ run as they are,
+// and are meant to be read (every file starts with a plain-language
+// explanation). This makes the copy that is published, in the top folder
+// (index.html, js/, static/), with the comments and spaces taken out, which
+// the browser loads faster. So GitHub Pages, publishing the top folder,
+// serves the fast copy, and the readable one is in src/ for reading. Run
 //     npm install     (once: fetches esbuild, the minifier)
 //     npm run build
-// and upload what is in dist/.
+// after changing anything in src/.
 //
 // Each script is minified on its own, not bundled into one: the page loads
 // them as separate modules (with the version in their addresses, see
@@ -22,8 +24,9 @@ import { readFile, writeFile, mkdir, rm, readdir, copyFile } from 'node:fs/promi
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const dist = join(root, 'dist');
+const top = join(dirname(fileURLToPath(import.meta.url)), '..');
+const source = join(top, 'src');   // the readable demo
+const target = top;                // where the copy goes
 const TARGET = 'es2022';   // (top-level await, class fields: every current browser)
 
 let before = 0, after = 0;
@@ -32,9 +35,10 @@ const note = (name, a, b) => {
   console.log(`${name.padEnd(28)} ${(a / 1024).toFixed(1).padStart(7)} kB → ${(b / 1024).toFixed(1).padStart(6)} kB`);
 };
 
-await rm(dist, { recursive: true, force: true });
-await mkdir(join(dist, 'js'), { recursive: true });
-await mkdir(join(dist, 'static'), { recursive: true });
+// (Only the copy's own parts are replaced: README, src/, build/ stay.)
+for (const part of ['index.html', 'js', 'static']) await rm(join(target, part), { recursive: true, force: true });
+await mkdir(join(target, 'js'), { recursive: true });
+await mkdir(join(target, 'static'), { recursive: true });
 
 // Shader text: no comments, no indentation, no empty lines. (Shaders have no
 // strings, so // and /* always start a comment; ${...} parts are left alone.)
@@ -52,15 +56,15 @@ function squeezeShaders(code) {
 }
 
 // The scripts.
-for (const name of (await readdir(join(root, 'js'))).filter((n) => n.endsWith('.js')).sort()) {
-  const code = await readFile(join(root, 'js', name), 'utf8');
+for (const name of (await readdir(join(source, 'js'))).filter((n) => n.endsWith('.js')).sort()) {
+  const code = await readFile(join(source, 'js', name), 'utf8');
   const out = await transform(squeezeShaders(code), { loader: 'js', format: 'esm', minify: true, target: TARGET, legalComments: 'none' });
-  await writeFile(join(dist, 'js', name), out.code);
+  await writeFile(join(target, 'js', name), out.code);
   note(`js/${name}`, Buffer.byteLength(code), Buffer.byteLength(out.code));
 }
 
 // The page: its style and its little script minified, its comments out.
-let html = await readFile(join(root, 'index.html'), 'utf8');
+let html = await readFile(join(source, 'index.html'), 'utf8');
 const htmlBefore = Buffer.byteLength(html);
 const replaceAsync = async (text, pattern, fn) => {
   const parts = [];
@@ -78,14 +82,14 @@ html = await replaceAsync(html, /<script>([\s\S]*?)<\/script>/g, async (m) =>
 html = html.replace(/<!--[\s\S]*?-->/g, '')          // comments
   .replace(/\n\s*\n/g, '\n')                          // empty lines
   .replace(/^\s+/gm, '');                             // indentation
-await writeFile(join(dist, 'index.html'), html);
+await writeFile(join(target, 'index.html'), html);
 note('index.html', htmlBefore, Buffer.byteLength(html));
 
 // Pictures, sounds and the font, as they are (but not the script that draws
 // the icons).
-for (const name of await readdir(join(root, 'static'))) {
+for (const name of await readdir(join(source, 'static'))) {
   if (name.endsWith('.py')) continue;
-  await copyFile(join(root, 'static', name), join(dist, 'static', name));
+  await copyFile(join(source, 'static', name), join(target, 'static', name));
 }
 
 console.log(`${'all of it'.padEnd(28)} ${(before / 1024).toFixed(1).padStart(7)} kB → ${(after / 1024).toFixed(1).padStart(6)} kB`);

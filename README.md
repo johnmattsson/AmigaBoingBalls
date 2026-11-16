@@ -78,33 +78,35 @@ The Controls panel (top right) sets the number and sizes of the balls, how they 
 
 ## How the code is organised
 
+The readable demo is in `src/`; the top folder holds the copy that is published, made from it with the comments and spaces taken out (see Publishing).
+
 | File | What it does |
 |---|---|
-| `index.html` | The page, its styling, and loading `js/main.js` |
-| `js/main.js` | Sets everything up and runs the animation loop |
-| `js/physics.js` | Moves, spins and bounces the balls |
-| `js/renderer.js` | Uploads shapes to the graphics card and draws each frame |
-| `js/shaders.js` | The GPU programs, including the shadow calculation |
-| `js/camera.js` | The orbiting camera and mouse/touch input |
-| `js/math.js` | Small 3D vector, rotation and matrix helpers |
-| `js/audio.js` | Plays the boing sounds, placed left or right |
-| `js/gui.js` | The settings panel, the About window and draggable windows |
-| `js/twist.js` | The Twist window: the twister effect, with its own shaders |
-| `js/music.js` | The chiptune: the notes and the little player that performs them |
-| `js/scroller.js` | The sine scroller, with its own little font |
-| `js/presets.js` | The ready-made scenes of the Preset button |
-| `js/precise.js` | The physics with 32 or 64 digits (the Digits choice), for longer rewinds |
-| `js/precise-wasm.js` | The 64-digit arithmetic compiled to WebAssembly (generated: see below) |
-| `js/rewindcheck.js` | The rewind test: a slightly nudged twin of the scene |
-| `js/physics-host.js` | Runs the physics and the rewind test, and answers each step with a snapshot of the balls |
-| `js/physics-worker.js` | Starts `physics-host.js` on a thread of its own (a Web Worker) |
-| `js/physics-client.js` | The page's side of the physics: passes changes on, keeps a copy of the balls for drawing |
-| `js/hdr.js` | Showing the picture on an HDR screen with WebGPU |
-| `build/build.mjs`, `package.json` | Makes the minified copy for publishing, in `dist/` (see Publishing) |
-| `static/make-favicons.py` | Draws the tab icons (16, 32, 48 and 192 pixels) and the phone home-screen icon |
-| `wasm/precise.c`, `wasm/build.sh` | The source of `js/precise-wasm.js`, and the script that builds it |
+| `src/index.html` | The page, its styling, and loading `js/main.js` |
+| `src/js/main.js` | Sets everything up and runs the animation loop |
+| `src/js/physics.js` | Moves, spins and bounces the balls |
+| `src/js/renderer.js` | Uploads shapes to the graphics card and draws each frame |
+| `src/js/shaders.js` | The GPU programs, including the shadow calculation |
+| `src/js/camera.js` | The orbiting camera and mouse/touch input |
+| `src/js/math.js` | Small 3D vector, rotation and matrix helpers |
+| `src/js/audio.js` | Plays the boing sounds, placed left or right |
+| `src/js/gui.js` | The settings panel, the About window and draggable windows |
+| `src/js/twist.js` | The Twist window: the twister effect, with its own shaders |
+| `src/js/music.js` | The chiptune: the notes and the little player that performs them |
+| `src/js/scroller.js` | The sine scroller, with its own little font |
+| `src/js/presets.js` | The ready-made scenes of the Preset button |
+| `src/js/precise.js` | The physics with 32 or 64 digits (the Digits choice), for longer rewinds |
+| `src/js/precise-wasm.js` | The 64-digit arithmetic compiled to WebAssembly (generated: see below) |
+| `src/js/rewindcheck.js` | The rewind test: a slightly nudged twin of the scene |
+| `src/js/physics-host.js` | Runs the physics and the rewind test, and answers each step with a snapshot of the balls |
+| `src/js/physics-worker.js` | Starts `physics-host.js` on a thread of its own (a Web Worker) |
+| `src/js/physics-client.js` | The page's side of the physics: passes changes on, keeps a copy of the balls for drawing |
+| `src/js/hdr.js` | Showing the picture on an HDR screen with WebGPU |
+| `build/build.mjs`, `package.json` | Makes the published copy (top folder) from `src/` (see Publishing) |
+| `src/static/make-favicons.py` | Draws the tab icons (16, 32, 48 and 192 pixels) and the phone home-screen icon |
+| `src/wasm/precise.c`, `src/wasm/build.sh` | The source of `src/js/precise-wasm.js`, and the script that builds it |
 
-Every file starts with a plain-language explanation of what it does.
+Every file starts with a plain-language explanation of what it does. Elsewhere in this README, `js/…` means `src/js/…`.
 
 ### How the balls are drawn
 
@@ -116,7 +118,7 @@ Every object that casts a shadow is a perfect sphere, so instead of a shadow map
 
 ### The physics on a thread of its own
 
-The physics and the rewind test run in a Web Worker (`js/physics-worker.js`), a thread of its own, so a slow physics step (1000 balls packed in a corner, computed with 64 digits) never holds up the drawing, the camera or the controls. The page keeps a copy of the balls as they were after the last step (`js/physics-client.js`): every frame it asks for the next step and shows one finished step, keeping one more finished step in hand. The balls are drawn two frames (1/30 s) behind the physics, always the same, and an answer that comes a little late (browsers can wake the worker's thread a moment later, especially after the tab was in the background) is simply the one in hand next time. Without that, the same picture of the balls would be shown twice and then jump: a stutter that no frame timing shows. The Info page's late-frame graph shows such repeats in blue. Changes (a push, a preset, the sliders) are passed on as messages, and every step is answered with a snapshot: positions, orientations, the trails' new points (the page keeps the trails itself; sending them whole came to 13 MB a step with 1000 balls and 10-second trails, now about 90 kB), what was hit (for the boings) and the numbers on the Info page. Where a worker can't be started (the page opened as a file, or an old browser), the same code runs on the page itself, as before; and should the worker ever stop with an error, the physics starts again on the page, with the preset set up afresh.
+The physics and the rewind test run in a Web Worker (`js/physics-worker.js`), a thread of its own, so a slow physics step (1000 balls packed in a corner, computed with 64 digits) never holds up the drawing, the camera or the controls. The page keeps a copy of the balls as they were after the last step (`js/physics-client.js`): every frame it asks for the next step and shows one finished step, keeping one more finished step in hand. The balls are drawn two frames (1/30 s) behind the physics, always the same, and an answer that comes a little late (browsers can wake the worker's thread a moment later, especially after the tab was in the background) is simply the one in hand next time. Without that, the same picture of the balls would be shown twice and then jump: a stutter that no frame timing shows. The Info page's late-frame graph shows such repeats in blue. Changes (a push, a preset, the sliders) are passed on as messages, and every step is answered with a snapshot: positions, orientations, the trails' new points (the page keeps the trails itself; sending them whole came to 13 MB a step with 1000 balls and 10-second trails, now about 90 kB), what was hit (for the boings) and the numbers on the Info page. Where a worker can't be started (the page opened as a file, or an old browser), the same code runs on the page itself, as before; and should the worker ever stop with an error, or not start within 4 seconds (a browser can leave it hanging after a quick reload), the physics carries on on the page.
 
 ### Tilt, and keeping the screen on
 
@@ -170,7 +172,7 @@ The copper bars' colours, number and speed are in `COPPER_FRAGMENT_SHADER` at th
 
 ## Running it locally
 
-The scripts are JavaScript modules, which browsers won't load straight from your disk (`file://`). Start any small web server in this folder, for example:
+The scripts are JavaScript modules, which browsers won't load straight from your disk (`file://`). Start any small web server, in `src/` for the readable demo or in the top folder for the published copy, for example:
 
 ```
 python3 -m http.server
@@ -180,18 +182,26 @@ and open http://localhost:8000.
 
 Needs a browser with WebGL2 (every current desktop and mobile browser).
 
+## When something goes wrong
+
+- If the demo can't start (a script fails to load, or an error while starting), the bottom line of the page says so, instead of the page staying grey; after 10 seconds without a start it says it is still starting.
+- If the browser takes the graphics card away from the page ("WebGL context lost": a graphics driver restart, or too many 3D pictures at once, which Safari can do on a quick reload), the scene is made anew when it comes back.
+
 ## Publishing
 
-Before publishing changes (for example to GitHub Pages), change `VERSION` near the bottom of `index.html`: raise the build number after the dash (`2.04-12` → `2.04-13`). The release shown on the page stays 2.04. Browsers keep copies of files they have downloaded; the version number makes every visitor fetch the new set of files at once, instead of a mix of old and new.
+The top folder is the web site: `index.html`, `js/` and `static/`, minified from the readable demo in `src/` (about 410 kB of scripts and page down to 160 kB, before the server's own compression). Put the whole folder on GitHub and GitHub Pages (publishing the branch's root) serves the fast copy; the readable one is in `src/` for anyone to read, and runs as it is too.
 
-The demo needs no build: `index.html`, `js/` and `static/` run as they are, and are meant to be read. For a web site there is also a minified copy, with the comments and spaces taken out (about 410 kB of scripts and page down to 160 kB, before the server's own compression):
+After changing anything in `src/`:
+
+1. Raise `VERSION` near the bottom of `src/index.html`: the build number after the dash (`2.04-12` → `2.04-13`). The release shown on the page stays 2.04. Browsers keep copies of files they have downloaded; the version number makes every visitor fetch the new set of files at once, instead of a mix of old and new.
+2. Make the published copy anew:
 
 ```sh
 npm install      # once: fetches esbuild, the minifier
-npm run build    # makes dist/
+npm run build    # src/ → index.html, js/, static/
 ```
 
-Upload what is in `dist/`. (On GitHub Pages, which publishes a branch's root or its `docs/` folder, copy `dist/` to `docs/`, or publish it with a GitHub Actions workflow.) Each script is minified on its own rather than bundled, as the page loads them as separate modules with the version in their addresses; from the shaders only comments and indentation are taken out. See `build/build.mjs`.
+Each script is minified on its own rather than bundled, as the page loads them as separate modules with the version in their addresses; from the shaders only comments and indentation are taken out. See `build/build.mjs`.
 
 The page also helps the browser load quickly: it fetches the Amiga font at once (`preload`) and announces all its scripts up front (`modulepreload`), so they are fetched side by side instead of one after another as each imports the next.
 
