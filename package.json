@@ -1,10 +1,12 @@
 {
   "name": "amiga-boing-balls",
   "private": true,
-  "description": "Makes the published site (index.html, js/, static/) from the readable demo in src/ (see build/build.mjs).",
+  "description": "Makes the published site (index.html, js/, static/) from the readable demo in src/ (see build/build.mjs), after checking the physics (see test/).",
   "type": "module",
   "scripts": {
-    "build": "node build/build.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:page": "python3 test/page.py",
+    "build": "node --test test/*.test.mjs && node build/build.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"
