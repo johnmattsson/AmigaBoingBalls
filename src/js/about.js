@@ -1,0 +1,273 @@
+// =============================================================================
+// about.js — the text of the About window, in four parts with tabs.
+//
+// Each part is a list of paragraphs: one that begins with "# " is a
+// heading, one that begins with "- " a point of a list, and a pair [key,
+// what it does] a row of the list of keys. (Shown by showRequester in
+// gui.js; opened by the About button, see main.js.)
+// =============================================================================
+
+export const ABOUT = [
+  { name: 'Amiga', paragraphs: [
+    '# The Boing Ball',
+    'The Boing Ball was the star of the Amiga\'s first public showing, at the Consumer Electronics Show in ' +
+    'Las Vegas in January 1984. The computer, code-named Lorraine, was still a prototype: its custom chips ' +
+    'were racks of hand-wired circuit boards, and its operating system was not ready. So the team showed a ' +
+    'demo instead: a big red-and-white checkered ball, spinning, bouncing and booming in stereo, with a ' +
+    'shadow on the wall behind it. Few people had seen a home computer do anything like it.',
+    'The ball was drawn only once. It spun by colour cycling, rotating the 14 red and white colours it was ' +
+    'painted in, and moved by scrolling the picture, so the processor had almost nothing to do. A later ' +
+    'version ran on a screen of its own: drag the Workbench screen down, and the ball was still bouncing ' +
+    'behind it.',
+    'Legend has it that Dale Luck and R. J. Mical wrote it in a single night during the show, that the ' +
+    'first version only bounced up and down, and that the two fell asleep on the floor of the booth with it ' +
+    'running, so that the morning staff were the first to see it.',
+    'More legends: the ball was so fast and smooth that visitors did not believe the prototype was drawing ' +
+    'it, and looked around the booth for a hidden computer or video player. The deep, echoing boing and ' +
+    'the bouncing from side to side were added only after the show. And the boing itself is said to be ' +
+    'Bob Pariseau hitting an aluminium garage door with a foam bat, recorded from inside the garage with ' +
+    'an Apple II; every boing in the demo is that one sound, played faster or slower, louder or softer. ' +
+    'The team wanted the ball as the Amiga\'s logo, and dozens of Boing Ball logos were made for the ' +
+    'launch, but Commodore chose its checkmark instead. The stories vary with the teller, but the ball ' +
+    'became the symbol of the Amiga anyway. Pick the preset "Classic 1984" for a reminder.',
+    { picture: 'about-classic.webp', alt: 'The preset Classic 1984: one big red-and-white ball in the box, its shadow on the back wall' },
+    '# Demo classics',
+    'The twister is a demo classic. Twist v4 is a nod to Twist v3, a red-and-white checkered twister ' +
+    'in Christophe R\u00e9sign\u00e9\'s Amiga Workbench for the browser (Chipbench, 2009), which also ' +
+    'inspired this demo\'s windows.',
+    'More effects from the Amiga demo scene, each in a window of its own like the Twist, in the ' +
+    'balls\' colours. Vector Bobs: "bobs" were the blitter\'s moving objects, and here a few hundred small ' +
+    'balls fly together into a cube, then a sphere, and back (a wider window has room for more). ' +
+    'Tunnel: a rollercoaster ride through a tube lined with the Boing checker, on a track made up at random as it ' +
+    'goes: turns, hills, loops and corkscrews. And one more is a backdrop: Kefrens bars, a single bar drawn once per screen ' +
+    'line and never wiped, so the bars pile up into a weaving curtain, named after the demo group Kefrens.',
+    { picture: 'about-effects.webp', alt: 'The three demo effects behind the balls: the Twist, the Vector Bobs and the Tunnel' },
+    'The other backdrops are classics too. Copper bars come from the Amiga\'s Copper, a little co-processor ' +
+    'that follows the picture as it is sent to the screen and can change a colour on any line; so bands of ' +
+    'colour cost the main processor nothing, and demos piled them up into shining bars. The starfield, layers ' +
+    'of stars gliding past at different speeds so the near ones seem closer, opened countless intros. And ' +
+    'the plasma is a few waves of colour added together for every pixel, an endlessly flowing pattern that ' +
+    'every demo coder of the day had to write once.',
+    { picture: 'about-backdrops.webp', alt: 'Four balls over the four backdrops: copper bars, the starfield, the plasma and Kefrens bars' },
+    '# Why 2.04?',
+    'Release 2.04 of the Amiga\'s operating system (Kickstart 37.175, autumn 1991) was the first version 2 ' +
+    'that most Amiga owners got, built into the Amiga 500 Plus. It brought the grey, 3D-shaded Workbench ' +
+    'look that this demo\'s windows and gadgets imitate.',
+    '# The Guru Meditation',
+    'When an Amiga crashed, a blinking red box said "Guru Meditation" and gave a number. The name is an ' +
+    'in-house joke from the Amiga company\'s early days, when it also made a board to stand or sit on, the ' +
+    'Joyboard, for games on the Atari 2600. When the prototypes crashed yet again, the developers sat ' +
+    'cross-legged on a Joyboard and tried to keep perfectly still, like a meditating guru; move, and you had ' +
+    'lost. Here the G key gives you one, and so does the close gadget, every other time. (The first time? ' +
+    'Try it.)',
+    { picture: 'about-guru.webp', alt: 'A Guru Meditation: a red box at the top of a black screen' },
+    '# Thanks',
+    'To my uncle Andreas Abelsson, alias King Grub, who introduced me to the Amiga, and who had endless ' +
+    'patience with me, a brat in the Bart Simpson mould. To my parents, who bought me computers when I was ' +
+    'a child. To my six children, who always thought my demos were cool. And to my wonderful wife, for her ' +
+    'love.',
+  ] },
+  { name: 'This demo', paragraphs: [
+    '# Balls in a box',
+    'Up to 4000 balls in a box. Every ball is a perfect sphere, worked out for each pixel it covers. The balls ' +
+    'are hollow shells, they spin, and every collision happens at exactly the right moment and place.',
+    '# Running time backwards',
+    'Because every collision is exact, time can also run backwards (the << button, or Speed below zero). ' +
+    'While it does, "<< REWIND" blinks in the corner. It cannot stay perfect forever: bouncing balls are ' +
+    'chaotic, and every collision makes the computer\'s rounding errors (in the 16th digit) several times ' +
+    'bigger. After some twenty collisions per ball the balls are on a different path.',
+    'Precision on the Info page sets how precise the physics\' numbers are: Double (the computer\'s usual ' +
+    '64-bit numbers, about 16 digits), Quadruple (about 32 digits) or Octuple (about 64 digits). The last two ' +
+    'are made of two and four ordinary numbers working together, almost as precise as true 128-bit and ' +
+    '256-bit numbers. More precise is slower, but the rewind lasts much longer: the Gas preset puts ' +
+    'itself together again from about 4 seconds with Double, 12 with Quadruple and over 30 with Octuple. (Press R after changing it, so the whole scene runs with the new precision.) Rewind test, on the Info page, runs a slightly nudged ' +
+    'copy of the scene alongside and shows as it goes how close to the start running backwards would bring ' +
+    'the balls, in ball sizes, beside its box: white is fine, yellow means a rewind would visibly miss, and ' +
+    '"lost" in red that it can no longer find its way back (also after any change by hand, from a push to ' +
+    'a slider on the Scene page). It only runs while the Controls are open. Switching it on, opening the Controls ' +
+    'again, or changing Precision starts it afresh from that moment, ' +
+    'and Restart measures from the start of the preset.',
+    '# The presets',
+    'The first five are showpieces:',
+    '- Four balls: the page\'s start.',
+    '- Classic 1984: one big ball as in the original, with its shadow on the back wall.',
+    '- Carousel: 48 balls in the box, while the camera circles above the ceiling.',
+    '- Copper demo: balls of all sizes filling the whole window over the copper bars, with the scroller and music.',
+    '- Megademo: a demo as they were made for the Amiga: one part after another, each for some twenty seconds, ' +
+    'with a fade through black between them, the scroller running all the while, and a tune of its own, whose bar ' +
+    'lines the parts change on. It opens with the ball of 1984 and its boing, then shows the balls over each ' +
+    'backdrop in turn and, between those, in front of the Twist, the Vector Bobs and the Tunnel; then it starts ' +
+    'again. Speed makes the show faster too, and Pause holds it.',
+    'The rest are little physics experiments, first single bounces and hits, then many balls:',
+    '- Superball: throw a super ball under a table and it comes back, because the first bounce makes it spin ' +
+    'and the spin throws it backwards at the second.',
+    '- Stacked drop: a small ball resting on a big one, dropped together; the big one bounces first and throws ' +
+    'the small one about eight times as high as it fell.',
+    '- Cradle: Newton\'s cradle without strings; each hit passes all the motion on down the row, and the walls ' +
+    'send it back, for ever.',
+    '- Break shot: billiards in mid-air, a yellow ball fired into a triangle of fifteen. Press << once they are ' +
+    'well mixed, and watch the triangle put itself together again.',
+    '- Rain: balls let go near the ceiling; as no energy is lost they never settle, and end up as a little ' +
+    'atmosphere, thickest at the bottom.',
+    '- Gas: a thousand tiny balls packed in a corner, without spin, spreading out to fill the box; watch the ' +
+    'speeds on the Info page spread out into Maxwell\'s curve. Press << after a few seconds to see them pack ' +
+    'themselves back into the corner.',
+    '- Brownian: one big ball among five hundred tiny ones, nudged about at random by their hits, as pollen in ' +
+    'water is by molecules (Einstein explained it in 1905).',
+    '# The sound',
+    'The boings are recordings from the original 1984 demo, restored: the two stereo channels lined up, ' +
+    'rumble and hiss removed, and a gentle lift around 2 kHz so that they carry on small speakers. Each ' +
+    'boing comes from the side of the screen where the bounce happens, and the harder the hit, the louder ' +
+    'it is; clicking a ball plays the demo\'s other boing. The five chiptunes on the Scene page are not ' +
+    'recordings: they are made from scratch in code, note by note.',
+    '# Made to run for days',
+    'The demo is meant to be left running, for hours or days. The clocks that drive the backdrops and the ' +
+    'effect windows go round every ten and a half minutes and start again, so their numbers never grow, and ' +
+    'nothing slowly drifts, judders or loses precision, however long it runs. The screen is kept awake ' +
+    'meanwhile. The effect windows only draw while they can be seen, so many ' +
+    'open windows cost little, and the physics only works while the balls move.',
+    '# The colours',
+    'The four ball colours are the elementary colours of the Natural Color System (NCS), a Swedish ' +
+    'colour standard built on how we see colour. In sRGB, the colours of the web, they are red [#C40233](#C40233), ' +
+    'yellow [#FFD300](#FFD300), green [#009F6B](#009F6B) and blue [#0087BD](#0087BD). In NCS notation they are [S 1080-R](ncs #C40233), [S 0580-Y](ncs #FFD300), ' +
+    '[S 2060-G](ncs #009F6B) and [S 2060-B](ncs #0087BD): S for the standard, then how black and how colourful the sample is, in per ' +
+    'cent (10 and 80 for the red), and last its hue, here exactly one of the four pure ones. The white ' +
+    'squares are NCS white, [W](#FFFFFF), the elementary white: a white purer than any paint, which a screen shows ' +
+    'as its own full white. But the elementary colours themselves, those hues at their most colourful, are ' +
+    'deeper than sRGB can show. So on a wide-colour (Display P3) screen the balls come closer to them, as close as P3 ' +
+    'reaches, while every other colour looks just as on any other screen. On a screen that shows even ' +
+    'more, about as much as Rec. 2020 (the wide colour of HDR television), and with HDR on, they come ' +
+    'closer still: about a third more colourful again, green and blue the most. NCS rests on three pairs of opposite elementary colours, white and black, red and green, ' +
+    'yellow and blue, and red, yellow, green and blue are the four hues that look pure, not like a mix of ' +
+    'others. So the balls come in the four pure hues of human colour vision, by a Swedish standard. ' +
+    'Even the Swedish flag is defined in it: its yellow is [NCS 0580-Y10R](#FECC02) and its blue [NCS 4055-R95B](#006AA7).',
+  ] },
+  { name: 'Controls', paragraphs: [
+    '# In the scene',
+    '- Drag: look around.',
+    '- Scroll or pinch: zoom.',
+    '- Click a ball: give it a push.',
+    '- Click a square of the grid: with Tile clicks (on the Look page, under Backdrop; only with Backdrop None), ' +
+    'Tricks turns it over (about a middle line or a diagonal), spins it a quarter turn, shrinks it to a point ' +
+    'or slides it out under its frame, by chance, and back, with space and stars showing behind it; Paint ' +
+    'gives it the next ball colour at each click, and then none again, and the paint stays until the scene starts over.',
+    '# The title bar',
+    '- Close gadget (left): does what closing a program on the Amiga too often did (in full screen, it goes back to the window).',
+    '- <<, || and >, and a slider: the speed of time (backwards, pause, forwards).',
+    '- The preset\'s name: the menu of them all; < and > step through them, and Restart starts again.',
+    '- Controls: the window of settings, in three pages.',
+    '- Zoom gadget (right): the full screen.',
+    'After a few seconds without the mouse, everything fades away, the mouse pointer too, and leaves just the scene.',
+    '# Keys',
+    ['Space', 'Pause, or carry on at the speed it had.'],
+    ['R', 'Start the preset again.'],
+    ['F', 'Full screen on or off.'],
+    ['Escape', 'Leave full screen, or else close the window in front (a second Escape closes the next one).'],
+    ['G', 'A Guru Meditation.'],
+    ['N', 'Oh no! A count from 5 over every ball, then they burst one after another into the squares of ' +
+      'their shells, which rain down and stay on the floor, in memory of a game from 1991 (so does the ' +
+      'close gadget, every other time). R brings them back.'],
+    ['Any key', 'Takes a Guru Meditation away again (so does a click).'],
+    '# Keys in menus and sliders',
+    ['Tab', 'On to the next button or slider.'],
+    ['Down', 'On a button that shows a choice: open its menu (so do Enter and Space).'],
+    ['Up Down', 'In a menu: through the choices.'],
+    ['Home End', 'In a menu: to the first or last choice. On a slider: to either end.'],
+    ['Enter Space', 'In a menu: choose.'],
+    ['Escape', 'In a menu: close it without choosing.'],
+    ['Left Right', 'On a slider: a step (Up and Down too).'],
+    ['PgUp PgDn', 'On a slider: a tenth of the way.'],
+    '# More with the mouse',
+    '- Buttons that show a choice (Backdrop, Music, Ball hits …): open a menu of all of them, as the preset\'s name does.',
+    '- Sliders: drag, or click one and move it with the keys (see above).',
+    '- Windows: drag them by their title bars (the Controls too); each button opens another window, as many as you like.',
+    '- Effect windows (Twist v4 and the others): resize them with their corner gadgets (a wider window has room ' +
+    'for more twists or more bobs); a double-click shows the effect on the full screen.',
+    '# Kept',
+    'The settings that are yours rather than the scene\'s (the volumes, Glints, Pixel size, HDR and Tile clicks), which no ' +
+    'preset changes, and the page of the Controls are kept for the next visit. The scene is not: the page ' +
+    'always starts with Four balls, running forwards, with the Rewind test off. Defaults (next to ' +
+    'About) puts the look, the room and the sound back as the preset has them and your own settings as at first, and the Controls in their corner; the balls carry on undisturbed.',
+    '# The control pages',
+    '- Scene: how many balls (none, to see a backdrop alone), how big, how lively, gravity, and how things ' +
+    'bounce. Then the sound: the boings (for the balls, or the walls too), and five chiptunes made from scratch in code ' +
+    '(the fifth is the Megademo\'s own long tune).',
+    '- Look: trails; the backdrop (copper bars, a starfield, a plasma, Kefrens bars, or one of the demo effects, ' +
+    'the Twist, the Vector Bobs or the Tunnel, with the balls and their shadows in front; the grid changes colour ' +
+    'to suit each); Tile clicks; the scrolling text; the credit line at the bottom. Then the room: turn "In a box" ' +
+    'off and the window itself becomes the room; Auto cam moves the camera by itself, in the way you choose: ' +
+    'Round (all the way round), Swing (from side to side in front, for scenes whose shadows fall on the back ' +
+    'wall), Rise (round, and up to look down from above) or Zoom (in and out, from where it stands); presets that ' +
+    'start with it on pick their own. Then the lamp: its switch (off: no shadows and no glints), Shadows, Glints ' +
+    '(a shiny spot on each ball, where it mirrors the lamp; with HDR it shines brighter than white), and how far ' +
+    'away the lamp is and how far tilted. Last, how it is drawn: Pixel size (big Amiga-style pixels with hard ' +
+    'edges, also in the Twist, Bobs and Tunnel windows; the stars become single dots, and at the biggest sizes the ' +
+    'scroller\'s letters grow to stay readable) and HDR (greyed out unless the screen shows HDR and the browser ' +
+    'has WebGPU): how bright light brighter than white gets (0 = off; it starts at 0.3 on an HDR screen), and then ' +
+    'the backdrops (the copper bars, the stars, the plasma\'s crests, the Kefrens bars), the glints, the ' +
+    'scroller\'s letters and the twist shine.',
+    '- Info: how fast your computer draws it all (FPS), the physics at work, Precision and the Rewind test ' +
+    '(see the Physics tab).',
+    'A row dotted over in grey changes nothing just now (Music vol with the music off, say), as on the Workbench.',
+  ] },
+  { name: 'Physics', paragraphs: [
+    '# How things bounce',
+    'A bounce is described by three numbers: what happens to the speed straight into the surface, to the ' +
+    'sliding along it, and to the twisting against it. 1 means it is reversed, -1 that it carries on untouched. ' +
+    'These are the only four kinds of bounce that lose no energy:',
+    '- Rough (1, 1, 1): everything reverses.',
+    '- Garwin (1, 1, -1): the ideal super ball.',
+    '- Smooth (1, -1, -1): slippery, spin is ignored.',
+    '- Twist (1, -1, 1): slippery, but twisting reverses.',
+    'Walls can also be "1984": slippery, and the ball turns the other way after each side wall, as in the ' +
+    'original demo (a real ball would not).',
+    '# The Info page',
+    '- Energy, Momentum and Ang. mom.: when balls hit each other they pass on momentum and angular momentum, ' +
+    'but the totals stay the same; only walls and gravity change them. "Energy" is all the energy there is; it ' +
+    'only changes when you click a ball or move Energy or Gravity.',
+    '- Rewind: beside Rewind test, while it runs, its result (see This demo), and below it a graph of the last ' +
+    '20 seconds or so: how far a rewind would miss (on a log scale; above the dotted line it is lost).',
+    '- The speeds: how fast the balls fly (blue) and spin (green), against the Maxwell-Boltzmann curve (red) ' +
+    'they settle into after enough collisions. Spin settles into a curve of its own: when the bounces can ' +
+    'change spin (Rough, say), each collision shares out energy between flying and spinning, and on average ' +
+    'every way a ball can move ends up with the same share (equipartition), so the spins, too, follow ' +
+    'Maxwell\'s law. Smooth and Twist bounces pass no energy between flying and spinning: with Smooth spin ' +
+    'never changes, and its bars stay where they started; with Twist only twisting passes from ball to ball.',
+    '- Pixels and Refresh: how many pixels are drawn, and the screen\'s refresh rate.',
+    '- Colours: P3 on a wide-colour screen, else sRGB, then HDR if it is on and the screen shows it, else ' +
+    'SDR; or Rec. 2020 (see This demo).',
+    '- Drawn with: WebGPU where the browser has it, else WebGL.',
+    '- Physics and Graphics: all the time the demo takes. Physics: for each step, the physics\' own thread ' +
+    'and the page\'s side of it. Graphics: everything else, for each frame drawn: the page\'s own work (getting ' +
+    'the picture ready, the pieces of burst balls, the Controls), the effect windows, and the graphics card. ' +
+    'Where the card\'s time cannot be measured (WebGPU without its timer, or HDR), it shows only the rest, ' +
+    'after a ">". Not counted: the browser\'s own work (putting the page on the screen, tidying its memory) ' +
+    'and the graphics card\'s time for the effect windows, which the page cannot measure.',
+    '- Hits/s: ball-on-ball hits per second.',
+    '- Dropped: frames dropped since the page was opened (a picture shown twice, which makes the motion jerk, ' +
+    'even when FPS says 60); the graph below it records all the time, the last two minutes of frame drops.',
+    'The rewind graph and the speeds only record while the Info page is shown.',
+    '# Hollow balls',
+    'The balls are thin shells, like beach balls, not solid like billiard balls. A shell has its weight far ' +
+    'from the middle, so it is harder to set spinning than a solid ball of the same weight (two thirds of ' +
+    'mass × radius², against two fifths). That decides how much of a rough bounce goes into spin and how ' +
+    'much stays in the flight, and so how far the Superball comes back.',
+    '# Finding the collisions',
+    'Testing every ball against every other ball each frame would mean eight million pairs with 4000 balls. ' +
+    'Instead the physics looks only a little ahead, at most a thirtieth of a second, and only at balls that are close enough ' +
+    'to meet in that time. For those few pairs it works out the exact moment of each hit, and then moves ' +
+    'everything from one hit to the next, in order. So 4000 balls still run smoothly, and each hit happens ' +
+    'at exactly the right moment, never a little too late inside another ball.',
+    '# How it is made',
+    'Plain JavaScript and the browser\'s own graphics, with no libraries. Every ball is a perfect sphere, ' +
+    'worked out for each pixel it covers, and so is every shadow; the grid lines are exactly as wide at ' +
+    'any angle. With WebGPU (Chrome and Edge) the graphics card also works out which balls can shadow ' +
+    'which part of the scene, many small programs side by side, and the scroller is drawn by it too; ' +
+    'elsewhere WebGL 2 draws the same picture. The ball colours are wide (Display P3, or even Rec. 2020) where the screen can ' +
+    'show them, and with HDR light can be brighter than white. The physics runs on a thread of its own, so a ' +
+    'slow physics step never holds up the drawing; its Octuple precision uses WebAssembly. The screen ' +
+    'is kept from dimming while the demo runs.',
+    'The source, every line of it explained in plain words, is on GitHub: ' +
+    '[github.com/johnmattsson/AmigaBoingBalls](https://github.com/johnmattsson/AmigaBoingBalls).',
+  ] },
+];
