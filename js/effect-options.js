@@ -1,1 +1,0 @@
-const t={device:null,hdr:!1,glow:!0,strength:1,wide:!0,sharp:!1,smooth:!0,onFullScreen:null},e=()=>t.sharp||!t.smooth?1:4,o=()=>`${t.sharp} ${t.smooth}`;export{o as effectLook,e as samples,t as twistOptions};
